@@ -3331,14 +3331,7 @@ bool Profiler::HandleServerQuery()
         SendString( ptr, (const char*)ptr, QueueType::StringData );
         break;
     case ServerQueryThreadString:
-        if( ptr == m_mainThread )
-        {
-            SendString( ptr, "Main thread", 11, QueueType::ThreadName );
-        }
-        else
-        {
-            SendString( ptr, GetThreadName( ptr ), QueueType::ThreadName );
-        }
+        SendString( ptr, GetThreadName( ptr ), QueueType::ThreadName );
         break;
     case ServerQuerySourceLocation:
         SendSourceLocation( ptr );
