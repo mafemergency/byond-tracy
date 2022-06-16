@@ -1,7 +1,6 @@
 root = .
 builddir = .\build
 bindir = .\bin
-byonddir = D:\$$BYOND\byond-514.1584\bin
 
 cc = clang
 cppc = clang++
@@ -105,15 +104,6 @@ build $builddir\MinHook\hde\hde32.o: cc src\MinHook\hde\hde32.c
 build $builddir\prof.o: cc src\prof.c
 
 build $bindir\prof.dll: $
-    link $
-        $builddir\TracyClient.o $
-        $builddir\MinHook\buffer.o $
-        $builddir\MinHook\hook.o $
-        $builddir\MinHook\trampoline.o $
-        $builddir\MinHook\hde\hde32.o $
-        $builddir\prof.o
-
-build $byonddir\prof.dll: $
     link $
         $builddir\TracyClient.o $
         $builddir\MinHook\buffer.o $
