@@ -18,7 +18,7 @@ static struct {
 /* requires compiler with good msvc compatibility to return this struct in
   registers EDX:EAX */
 struct object exec_proc(struct proc *proc) {
-	if(proc->procdef <= 0x1000) {
+	if(proc->procdef < 0x1000) {
 		struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(srclocs + proc->procdef, 1);
 
 		/* procs with pre-existing contexts are resuming from sleep */
