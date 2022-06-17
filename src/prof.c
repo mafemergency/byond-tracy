@@ -165,10 +165,6 @@ static int prof_init(void) {
 		return -1;
 	}
 
-	if(MH_EnableHook(byond.exec_proc)) {
-		return -1;
-	}
-
 	if(MH_CreateHook(byond.sendmaps, (void *) sendmaps, (void *) &byond.orig_sendmaps)) {
 		return -1;
 	}
