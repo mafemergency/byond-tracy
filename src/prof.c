@@ -2,8 +2,9 @@
 #include "byond.h"
 #include "MinHook/MinHook.h"
 #include "tracy-0.8.1/TracyC.h"
+#include <stdio.h>
 
-static struct ___tracy_source_location_data srclocs[0x1000];
+static struct ___tracy_source_location_data srclocs[0x10000];
 static struct {
 	struct string ***strings;
 	int unsigned *strings_len;
@@ -18,7 +19,7 @@ static struct {
 /* requires compiler with good msvc compatibility to return this struct in
   registers EDX:EAX */
 struct object exec_proc(struct proc *proc) {
-	if(proc->procdef < 0x1000) {
+	if(proc->procdef < 0x10000) {
 		struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(srclocs + proc->procdef, 1);
 
 		/* procs with pre-existing contexts are resuming from sleep */
@@ -38,7 +39,7 @@ struct object exec_proc(struct proc *proc) {
 
 /* prepopulate source locations for all procs */
 void build_srclocs(void) {
-	for(int unsigned i=0; i<0x1000; i++) {
+	for(int unsigned i=0; i<0x10000; i++) {
 		struct ___tracy_source_location_data *const srcloc = srclocs + i;
 
 		if(i < *byond.procdefs_len) {
