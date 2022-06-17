@@ -14,11 +14,15 @@ static struct {
 	int unsigned *procdefs_len;
 	void *exec_proc;
 	struct object (*orig_exec_proc)(struct proc *);
+	void *servertick;
+	int (*orig_servertick)(void);
+	void *sendmaps;
+	void (*orig_sendmaps)(void);
 } byond;
 
 /* requires compiler with good msvc compatibility to return this struct in
-  registers EDX:EAX */
-struct object exec_proc(struct proc *proc) {
+   registers EDX:EAX */
+static struct object exec_proc(struct proc *proc) {
 	if(proc->procdef < 0x10000) {
 		struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(srclocs + proc->procdef, 1);
 
@@ -37,58 +41,99 @@ struct object exec_proc(struct proc *proc) {
 	return byond.orig_exec_proc(proc);
 }
 
+static int servertick(void) {
+	TracyCFrameMark;
+
+	static struct ___tracy_source_location_data const srcloc = {
+		.name = NULL,
+		.function = "ServerTick",
+		.file = __FILE__,
+		.line = __LINE__,
+		.color = 0x44AF44
+	};
+
+	struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(&srcloc, 1);
+
+	int r = byond.orig_servertick();
+
+	___tracy_emit_zone_end(tracy_ctx);
+
+	return r;
+}
+
+static void sendmaps(void) {
+	static struct ___tracy_source_location_data const srcloc = {
+		.name = NULL,
+		.function = "SendMaps",
+		.file = __FILE__,
+		.line = __LINE__,
+		.color = 0x44AF44
+	};
+
+	struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(&srcloc, 1);
+
+	byond.orig_sendmaps();
+
+	___tracy_emit_zone_end(tracy_ctx);
+}
+
 /* prepopulate source locations for all procs */
-void build_srclocs(void) {
+static void build_srclocs(void) {
+	#define byond_get_string(id) (id < *byond.strings_len ? *(*byond.strings + id) : NULL)
+	#define byond_get_misc(id) (id < *byond.miscs_len ? *(*byond.miscs + id) : NULL)
+	#define byond_get_procdef(id) (id < *byond.procdefs_len ? *byond.procdefs + id : NULL)
+
 	for(int unsigned i=0; i<0x10000; i++) {
 		struct ___tracy_source_location_data *const srcloc = srclocs + i;
 
-		if(i < *byond.procdefs_len) {
-			struct procdef *procdef = *byond.procdefs + i;
-			if(procdef != NULL) {
-				srcloc->name = NULL;
-				srcloc->color = 0x4444AF;
+		struct procdef const *const procdef = byond_get_procdef(i);
+		if(procdef != NULL) {
+			srcloc->name = NULL;
+			srcloc->color = 0x4444AF;
 
-				if(procdef->path < *byond.strings_len) {
-					srcloc->function = (*(*byond.strings + procdef->path))->data;
-				} else {
-					srcloc->function = "<?>";
-				}
+			struct string const *const str = byond_get_string(procdef->path);
+			if(str != NULL && str->len > 0) {
+				srcloc->function = str->data;
+			} else {
+				srcloc->function = "<?>";
+			}
 
-				if(procdef->bytecode < *byond.miscs_len) {
-					struct misc *misc = *(*byond.miscs + procdef->bytecode);
-					int unsigned bytecode_len = misc->bytecode.len;
-					int unsigned *bytecode = misc->bytecode.bytecode;
-					if(bytecode_len >= 2) {
-						if(bytecode[0x00] == 0x84) {
-							int unsigned file = bytecode[0x01];
-							if(file < *byond.strings_len) {
-								srcloc->file = (*(*byond.strings + file))->data;
-							} else {
-								srcloc->file = "<?.dm>";
-							}
+			struct misc const *const misc = byond_get_misc(procdef->bytecode);
+			if(misc != NULL) {
+				int unsigned bytecode_len = misc->bytecode.len;
+				int unsigned *bytecode = misc->bytecode.bytecode;
+				if(bytecode_len >= 2) {
+					if(bytecode[0x00] == 0x84) {
+						int unsigned file = bytecode[0x01];
+						if(file < *byond.strings_len) {
+							srcloc->file = (*(*byond.strings + file))->data;
+						} else {
+							srcloc->file = "<?.dm>";
+						}
 
-							if(bytecode_len >= 4) {
-								if(bytecode[0x02] == 0x85) {
-									srcloc->line = bytecode[0x03];
-								}
+						if(bytecode_len >= 4) {
+							if(bytecode[0x02] == 0x85) {
+								srcloc->line = bytecode[0x03];
 							}
 						}
 					}
-				} else {
-					srcloc->file = "<?.dm>";
-					srcloc->line = 0xFFFFFFFF;
 				}
-
-				continue;
+			} else {
+				srcloc->file = "<?.dm>";
+				srcloc->line = 0xFFFFFFFF;
 			}
+		} else {
+			srcloc->name = NULL;
+			srcloc->function = "<?>";
+			srcloc->file = "<?.dm>";
+			srcloc->line = 0xFFFFFFFF;
+			srcloc->color = 0x44AF44;
 		}
-
-		srcloc->name = NULL;
-		srcloc->function = "<?>";
-		srcloc->file = "<?.dm>";
-		srcloc->line = 0xFFFFFFFF;
-		srcloc->color = 0x44AF44;
 	}
+
+	#undef byond_get_string
+	#undef byond_get_misc
+	#undef byond_get_procdef
 }
 
 static int prof_init(void) {
@@ -109,16 +154,30 @@ static int prof_init(void) {
 	byond.procdefs = byondcore + 0x003764D4;
 	byond.procdefs_len = byondcore + 0x003764D8;
 	byond.exec_proc = byondcore + 0x00108460;
+	byond.servertick = byondcore + 0x001D3A40;
+	byond.sendmaps = byondcore + 0x001922C0;
 
 	if(MH_Initialize() != MH_OK) {
 		return -1;
 	}
 
-	if(MH_CreateHook(byond.exec_proc, exec_proc, (void *) &byond.orig_exec_proc)) {
+	if(MH_CreateHook(byond.exec_proc, (void *) exec_proc, (void *) &byond.orig_exec_proc)) {
 		return -1;
 	}
 
 	if(MH_EnableHook(byond.exec_proc)) {
+		return -1;
+	}
+
+	if(MH_CreateHook(byond.sendmaps, (void *) sendmaps, (void *) &byond.orig_sendmaps)) {
+		return -1;
+	}
+
+	if(MH_CreateHook(byond.servertick, (void *) servertick, (void *) &byond.orig_servertick)) {
+		return -1;
+	}
+
+	if(MH_EnableHook(MH_ALL_HOOKS)) {
 		return -1;
 	}
 
