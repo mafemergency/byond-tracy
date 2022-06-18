@@ -37,12 +37,14 @@ struct procdef {
 struct proc {
 	int unsigned procdef;
 	char unsigned flags;
+	/* dreamdaemon dies silently if you have more than 255 overrides */
 	char unsigned supers;
 	/* likely just padding */
 	short unsigned unused;
 	struct object usr;
 	struct object src;
 	void *ctx;
+	/* incremented each time a new (not resumed) proc is called */
 	int unsigned sequence;
 	void (*callback)(struct object, int unsigned);
 	int unsigned callback_arg;
