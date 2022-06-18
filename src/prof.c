@@ -1,9 +1,15 @@
 #include <windows.h>
 #include "byond.h"
 #include "MinHook/MinHook.h"
-#include "tracy-0.8.1/TracyC.h"
-#include <stdio.h>
+#include "tracy/TracyC.h"
 
+#define BYOND_VERSION(major, minor) MAKELONG((minor), (major))
+
+/* stores source locations for up to 65,535 procs
+   funny quirk is byond supports more than 0xFFFF procs but the 0xFFFFth proc
+   is a sentinel value sort of like NULL so the 0xFFFFth proc skips this value
+   and is 0x10000 instead
+   tgstation has over 50,000 procdefs */
 static struct ___tracy_source_location_data srclocs[0x10000];
 static struct {
 	struct string ***strings;
@@ -42,8 +48,6 @@ static struct object exec_proc(struct proc *proc) {
 }
 
 static int servertick(void) {
-	TracyCFrameMark;
-
 	static struct ___tracy_source_location_data const srcloc = {
 		.name = NULL,
 		.function = "ServerTick",
@@ -52,13 +56,16 @@ static int servertick(void) {
 		.color = 0x44AF44
 	};
 
+	/* server tick is the end of a frame and the beginning of the next frame */
+	___tracy_emit_frame_mark(NULL);
+
 	struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(&srcloc, 1);
 
-	int r = byond.orig_servertick();
+	int interval = byond.orig_servertick();
 
 	___tracy_emit_zone_end(tracy_ctx);
 
-	return r;
+	return interval;
 }
 
 static void sendmaps(void) {
@@ -136,6 +143,67 @@ static void build_srclocs(void) {
 	#undef byond_get_procdef
 }
 
+static int byond_init(char unsigned *byondcore) {
+	/* these functions are __thiscall but have trivial bodies at the moment */
+	typedef int (*PFN_BYOND_VERSION)(void);
+	typedef int (*PFN_BYOND_BUILD)(void);
+
+	PFN_BYOND_VERSION byond_version = (PFN_BYOND_VERSION) GetProcAddress(
+		(HMODULE) byondcore,
+		"?GetByondVersion@ByondLib@@QAEJXZ"
+	);
+
+	if(byond_version == NULL) {
+		return -1;
+	}
+
+	 PFN_BYOND_BUILD byond_build = (PFN_BYOND_BUILD) GetProcAddress(
+		(HMODULE) byondcore,
+		"?GetByondBuild@ByondLib@@QAEJXZ"
+	);
+
+	if(byond_build == NULL) {
+		return -1;
+	}
+
+	int unsigned major = byond_version();
+	int unsigned minor = byond_build();
+	int unsigned version = BYOND_VERSION(major, minor);
+
+	int unsigned tables;
+
+	switch(version) {
+		case BYOND_VERSION(514, 1584):
+			tables = 0x003764B4;
+			byond.strings = (void *) (byondcore + tables + 0x00);
+			byond.strings_len = (void *) (byondcore + tables + 0x04);
+			byond.miscs = (void *) (byondcore + tables + 0x10);
+			byond.miscs_len = (void *) (byondcore + tables + 0x14);
+			byond.procdefs = (void *) (byondcore + tables + 0x20);
+			byond.procdefs_len = (void *) (byondcore + tables + 0x24);
+			byond.exec_proc = (void *) (byondcore + 0x00108460);
+			byond.servertick = (void *) (byondcore + 0x001D3A40);
+			byond.sendmaps = (void *) (byondcore + 0x001922C0);
+			break;
+		case BYOND_VERSION(514, 1583):
+			tables = 0x003755C8;
+			byond.strings = (void *) (byondcore + tables + 0x00);
+			byond.strings_len = (void *) (byondcore + tables + 0x04);
+			byond.miscs = (void *) (byondcore + tables + 0x10);
+			byond.miscs_len = (void *) (byondcore + tables + 0x14);
+			byond.procdefs = (void *) (byondcore + tables + 0x20);
+			byond.procdefs_len = (void *) (byondcore + tables + 0x24);
+			byond.exec_proc = (void *) (byondcore + 0x00108240);
+			byond.servertick = (void *) (byondcore + 0x001D33F0);
+			byond.sendmaps = (void *) (byondcore + 0x001919E0);
+			break;
+		default:
+			return -1;
+	}
+
+	return 0;
+}
+
 static int prof_init(void) {
 	void *byondcore;
 	if(GetModuleHandleExA(
@@ -146,18 +214,11 @@ static int prof_init(void) {
 		return -1;
 	}
 
-	/* only valid for 514.1584 */
-	byond.strings = byondcore + 0x003764B4;
-	byond.strings_len = byondcore + 0x003764B8;
-	byond.miscs = byondcore + 0x003764C4;
-	byond.miscs_len = byondcore + 0x003764C8;
-	byond.procdefs = byondcore + 0x003764D4;
-	byond.procdefs_len = byondcore + 0x003764D8;
-	byond.exec_proc = byondcore + 0x00108460;
-	byond.servertick = byondcore + 0x001D3A40;
-	byond.sendmaps = byondcore + 0x001922C0;
+	if(byond_init(byondcore)) {
+		return -1;
+	}
 
-	if(MH_Initialize() != MH_OK) {
+	if(MH_Initialize()) {
 		return -1;
 	}
 
