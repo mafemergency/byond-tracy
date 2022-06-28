@@ -1,7 +1,7 @@
 /*
  *  LZ4 - Fast LZ compression algorithm
  *  Header File
- *  Copyright (C) 2011-present, Yann Collet.
+ *  Copyright (C) 2011-2020, Yann Collet.
 
    BSD 2-Clause License (http://www.opensource.org/licenses/bsd-license.php)
 
@@ -32,13 +32,15 @@
     - LZ4 homepage : http://www.lz4.org
     - LZ4 source repository : https://github.com/lz4/lz4
 */
+#if defined (__cplusplus)
+extern "C" {
+#endif
 
-#ifndef TRACY_LZ4_H_2983827168210
-#define TRACY_LZ4_H_2983827168210
+#ifndef LZ4_H_2983827168210
+#define LZ4_H_2983827168210
 
 /* --- Dependency --- */
 #include <stddef.h>   /* size_t */
-#include <stdint.h>
 
 
 /**
@@ -98,7 +100,7 @@
 /*------   Version   ------*/
 #define LZ4_VERSION_MAJOR    1    /* for breaking interface changes  */
 #define LZ4_VERSION_MINOR    9    /* for new (non-breaking) interface capabilities */
-#define LZ4_VERSION_RELEASE  3    /* for tweaks, bug-fixes, or development */
+#define LZ4_VERSION_RELEASE  4    /* for tweaks, bug-fixes, or development */
 
 #define LZ4_VERSION_NUMBER (LZ4_VERSION_MAJOR *100*100 + LZ4_VERSION_MINOR *100 + LZ4_VERSION_RELEASE)
 
@@ -107,9 +109,6 @@
 #define LZ4_EXPAND_AND_QUOTE(str) LZ4_QUOTE(str)
 #define LZ4_VERSION_STRING LZ4_EXPAND_AND_QUOTE(LZ4_LIB_VERSION)
 
-namespace tracy
-{
-
 LZ4LIB_API int LZ4_versionNumber (void);  /**< library version number; useful to check dll version */
 LZ4LIB_API const char* LZ4_versionString (void);   /**< library version string; useful to check dll version */
 
@@ -117,17 +116,28 @@ LZ4LIB_API const char* LZ4_versionString (void);   /**< library version string; 
 /*-************************************
 *  Tuning parameter
 **************************************/
+#define LZ4_MEMORY_USAGE_MIN 10
+#define LZ4_MEMORY_USAGE_DEFAULT 14
+#define LZ4_MEMORY_USAGE_MAX 20
+
 /*!
  * LZ4_MEMORY_USAGE :
- * Memory usage formula : N->2^N Bytes (examples : 10 -> 1KB; 12 -> 4KB ; 16 -> 64KB; 20 -> 1MB; etc.)
- * Increasing memory usage improves compression ratio.
- * Reduced memory usage may improve speed, thanks to better cache locality.
+ * Memory usage formula : N->2^N Bytes (examples : 10 -> 1KB; 12 -> 4KB ; 16 -> 64KB; 20 -> 1MB; )
+ * Increasing memory usage improves compression ratio, at the cost of speed.
+ * Reduced memory usage may improve speed at the cost of ratio, thanks to better cache locality.
  * Default value is 14, for 16KB, which nicely fits into Intel x86 L1 cache
  */
 #ifndef LZ4_MEMORY_USAGE
-# define LZ4_MEMORY_USAGE 14
+# define LZ4_MEMORY_USAGE LZ4_MEMORY_USAGE_DEFAULT
 #endif
 
+#if (LZ4_MEMORY_USAGE < LZ4_MEMORY_USAGE_MIN)
+#  error "LZ4_MEMORY_USAGE is too small !"
+#endif
+
+#if (LZ4_MEMORY_USAGE > LZ4_MEMORY_USAGE_MAX)
+#  error "LZ4_MEMORY_USAGE is too large !"
+#endif
 
 /*-************************************
 *  Simple Functions
@@ -420,8 +430,7 @@ LZ4LIB_API int LZ4_decompress_safe_continue (LZ4_streamDecode_t* LZ4_streamDecod
  */
 LZ4LIB_API int LZ4_decompress_safe_usingDict (const char* src, char* dst, int srcSize, int dstCapcity, const char* dictStart, int dictSize);
 
-}
-
+LZ4LIB_API int LZ4_decompress_safe_partial_usingDict(const char* source, char* dest, int compressedSize, int targetOutputSize, int maxOutputSize, const char* dictStart, int dictSize);
 #endif /* LZ4_H_2983827168210 */
 
 
@@ -451,8 +460,8 @@ LZ4LIB_API int LZ4_decompress_safe_usingDict (const char* src, char* dst, int sr
 
 #ifdef LZ4_STATIC_LINKING_ONLY
 
-#ifndef TRACY_LZ4_STATIC_3504398509
-#define TRACY_LZ4_STATIC_3504398509
+#ifndef LZ4_STATIC_3504398509
+#define LZ4_STATIC_3504398509
 
 #ifdef LZ4_PUBLISH_STATIC_FUNCTIONS
 #define LZ4LIB_STATIC_API LZ4LIB_API
@@ -460,8 +469,6 @@ LZ4LIB_API int LZ4_decompress_safe_usingDict (const char* src, char* dst, int sr
 #define LZ4LIB_STATIC_API
 #endif
 
-namespace tracy
-{
 
 /*! LZ4_compress_fast_extState_fastReset() :
  *  A variant of LZ4_compress_fast_extState().
@@ -507,7 +514,7 @@ LZ4LIB_STATIC_API void LZ4_attach_dictionary(LZ4_stream_t* workingStream, const 
 /*! In-place compression and decompression
  *
  * It's possible to have input and output sharing the same buffer,
- * for highly contrained memory environments.
+ * for highly constrained memory environments.
  * In both cases, it requires input to lay at the end of the buffer,
  * and decompression to start at beginning of the buffer.
  * Buffer size must feature some margin, hence be larger than final size.
@@ -565,16 +572,13 @@ LZ4LIB_STATIC_API void LZ4_attach_dictionary(LZ4_stream_t* workingStream, const 
 #define LZ4_COMPRESS_INPLACE_MARGIN                           (LZ4_DISTANCE_MAX + 32)   /* LZ4_DISTANCE_MAX can be safely replaced by srcSize when it's smaller */
 #define LZ4_COMPRESS_INPLACE_BUFFER_SIZE(maxCompressedSize)   ((maxCompressedSize) + LZ4_COMPRESS_INPLACE_MARGIN)  /**< maxCompressedSize is generally LZ4_COMPRESSBOUND(inputSize), but can be set to any lower value, with the risk that compression can fail (return code 0(zero)) */
 
-}
-
 #endif   /* LZ4_STATIC_3504398509 */
 #endif   /* LZ4_STATIC_LINKING_ONLY */
 
-#ifndef TRACY_LZ4_H_98237428734687
-#define TRACY_LZ4_H_98237428734687
 
-namespace tracy
-{
+
+#ifndef LZ4_H_98237428734687
+#define LZ4_H_98237428734687
 
 /*-************************************************************
  *  Private Definitions
@@ -588,6 +592,7 @@ namespace tracy
 #define LZ4_HASH_SIZE_U32 (1 << LZ4_HASHLOG)       /* required as macro for static allocation */
 
 #if defined(__cplusplus) || (defined (__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) /* C99 */)
+# include <stdint.h>
   typedef  int8_t  LZ4_i8;
   typedef uint8_t  LZ4_byte;
   typedef uint16_t LZ4_u16;
@@ -627,7 +632,7 @@ typedef struct {
  *  note : only use this definition in association with static linking !
  *  this definition is not API/ABI safe, and may change in future versions.
  */
-#define LZ4_STREAMSIZE       16416  /* static size, for inter-version compatibility */
+#define LZ4_STREAMSIZE       ((1UL << LZ4_MEMORY_USAGE) + 32)  /* static size, for inter-version compatibility */
 #define LZ4_STREAMSIZE_VOIDP (LZ4_STREAMSIZE / sizeof(void*))
 union LZ4_stream_u {
     void* table[LZ4_STREAMSIZE_VOIDP];
@@ -772,6 +777,10 @@ LZ4LIB_API int LZ4_decompress_fast_usingDict (const char* src, char* dst, int or
  */
 LZ4LIB_API void LZ4_resetStream (LZ4_stream_t* streamPtr);
 
-}
 
 #endif /* LZ4_H_98237428734687 */
+
+
+#if defined (__cplusplus)
+}
+#endif

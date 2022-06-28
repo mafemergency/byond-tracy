@@ -43,7 +43,7 @@ struct proc {
 	short unsigned unused;
 	struct object usr;
 	struct object src;
-	void *ctx;
+	struct execution_context *ctx;
 	/* incremented each time a new (not resumed) proc is called */
 	int unsigned sequence;
 	void (*callback)(struct object, int unsigned);

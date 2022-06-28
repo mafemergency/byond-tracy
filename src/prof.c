@@ -1,7 +1,14 @@
 #include <windows.h>
 #include "byond.h"
 #include "MinHook/MinHook.h"
-#include "tracy/TracyC.h"
+
+#ifdef USE_MICROTRACY
+#	include "microtracy/microtracy.h"
+#else
+#	include "tracy/TracyC.h"
+#endif
+
+#include <stdio.h>
 
 #define BYOND_VERSION(major, minor) MAKELONG((minor), (major))
 
@@ -112,8 +119,9 @@ static void build_srclocs(void) {
 				if(bytecode_len >= 2) {
 					if(bytecode[0x00] == 0x84) {
 						int unsigned file = bytecode[0x01];
-						if(file < *byond.strings_len) {
-							srcloc->file = (*(*byond.strings + file))->data;
+						struct string const *const file_str = byond_get_string(file);
+						if(file_str != NULL && file_str->len > 0) {
+							srcloc->file = file_str->data;
 						} else {
 							srcloc->file = "<?.dm>";
 						}
@@ -205,6 +213,31 @@ static int byond_init(char unsigned *byondcore) {
 }
 
 static int prof_init(void) {
+#ifdef USE_MICROTRACY
+	HANDLE init_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+	if(NULL == init_event) {
+		return -1;
+	}
+
+	HANDLE utracy_thr = CreateThread(
+		NULL,
+		0,
+		utracy_thread_start,
+		init_event,
+		0,
+		NULL
+	);
+
+	if(NULL == utracy_thr) {
+		return -1;
+	}
+
+	/* this waits for client to connect before letting dreamdaemon proceed! */
+	WaitForSingleObject(init_event, INFINITE);
+
+	printf("utracy ready!\n");
+#endif
+
 	void *byondcore;
 	if(GetModuleHandleExA(
 		GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -234,12 +267,12 @@ static int prof_init(void) {
 		return -1;
 	}
 
+	build_srclocs();
+	___tracy_set_thread_name("byond thread");
+
 	if(MH_EnableHook(MH_ALL_HOOKS)) {
 		return -1;
 	}
-
-	build_srclocs();
-	___tracy_set_thread_name("byond thread");
 
 	return 0;
 }
