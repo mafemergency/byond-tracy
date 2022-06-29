@@ -1,14 +1,7 @@
 #include <windows.h>
 #include "byond.h"
 #include "MinHook/MinHook.h"
-
-#ifdef USE_MICROTRACY
-#	include "microtracy/microtracy.h"
-#else
-#	include "tracy/TracyC.h"
-#endif
-
-#include <stdio.h>
+#include "microtracy/microtracy.h"
 
 #define BYOND_VERSION(major, minor) MAKELONG((minor), (major))
 
@@ -17,7 +10,7 @@
    is a sentinel value sort of like NULL so the 0xFFFFth proc skips this value
    and is 0x10000 instead
    tgstation has over 50,000 procdefs */
-static struct ___tracy_source_location_data srclocs[0x10000];
+static struct utracy_source_location srclocs[0x10000];
 static struct {
 	struct string ***strings;
 	int unsigned *strings_len;
@@ -37,16 +30,16 @@ static struct {
    registers EDX:EAX */
 static struct object exec_proc(struct proc *proc) {
 	if(proc->procdef < 0x10000) {
-		struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(srclocs + proc->procdef, 1);
+		utracy_emit_zone_begin(srclocs + proc->procdef);
 
 		/* procs with pre-existing contexts are resuming from sleep */
 		if(proc->ctx != NULL) {
-			___tracy_emit_zone_color(tracy_ctx, 0xAF4444);
+			utracy_emit_zone_color(0xAF4444);
 		}
 
 		struct object result = byond.orig_exec_proc(proc);
 
-		___tracy_emit_zone_end(tracy_ctx);
+		utracy_emit_zone_end();
 
 		return result;
 	}
@@ -55,7 +48,7 @@ static struct object exec_proc(struct proc *proc) {
 }
 
 static int servertick(void) {
-	static struct ___tracy_source_location_data const srcloc = {
+	static struct utracy_source_location const srcloc = {
 		.name = NULL,
 		.function = "ServerTick",
 		.file = __FILE__,
@@ -64,19 +57,19 @@ static int servertick(void) {
 	};
 
 	/* server tick is the end of a frame and the beginning of the next frame */
-	___tracy_emit_frame_mark(NULL);
+	utracy_emit_frame_mark(NULL);
 
-	struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(&srcloc, 1);
+	utracy_emit_zone_begin(&srcloc);
 
 	int interval = byond.orig_servertick();
 
-	___tracy_emit_zone_end(tracy_ctx);
+	utracy_emit_zone_end();
 
 	return interval;
 }
 
 static void sendmaps(void) {
-	static struct ___tracy_source_location_data const srcloc = {
+	static struct utracy_source_location const srcloc = {
 		.name = NULL,
 		.function = "SendMaps",
 		.file = __FILE__,
@@ -84,11 +77,11 @@ static void sendmaps(void) {
 		.color = 0x44AF44
 	};
 
-	struct ___tracy_c_zone_context tracy_ctx = ___tracy_emit_zone_begin(&srcloc, 1);
+	utracy_emit_zone_begin(&srcloc);
 
 	byond.orig_sendmaps();
 
-	___tracy_emit_zone_end(tracy_ctx);
+	utracy_emit_zone_end();
 }
 
 /* prepopulate source locations for all procs */
@@ -98,18 +91,17 @@ static void build_srclocs(void) {
 	#define byond_get_procdef(id) (id < *byond.procdefs_len ? *byond.procdefs + id : NULL)
 
 	for(int unsigned i=0; i<0x10000; i++) {
-		struct ___tracy_source_location_data *const srcloc = srclocs + i;
+		char const *name = NULL;
+		char const *function = "<?>";
+		char const *file = "<?.dm>";
+		int unsigned line = 0xFFFFFFFFu;
+		int unsigned color = 0x4444AF;
 
 		struct procdef const *const procdef = byond_get_procdef(i);
 		if(procdef != NULL) {
-			srcloc->name = NULL;
-			srcloc->color = 0x4444AF;
-
 			struct string const *const str = byond_get_string(procdef->path);
 			if(str != NULL && str->len > 0) {
-				srcloc->function = str->data;
-			} else {
-				srcloc->function = "<?>";
+				function = str->data;
 			}
 
 			struct misc const *const misc = byond_get_misc(procdef->bytecode);
@@ -118,32 +110,29 @@ static void build_srclocs(void) {
 				int unsigned *bytecode = misc->bytecode.bytecode;
 				if(bytecode_len >= 2) {
 					if(bytecode[0x00] == 0x84) {
-						int unsigned file = bytecode[0x01];
-						struct string const *const file_str = byond_get_string(file);
+						int unsigned file_id = bytecode[0x01];
+						struct string const *const file_str = byond_get_string(file_id);
 						if(file_str != NULL && file_str->len > 0) {
-							srcloc->file = file_str->data;
-						} else {
-							srcloc->file = "<?.dm>";
+							file = file_str->data;
 						}
 
 						if(bytecode_len >= 4) {
 							if(bytecode[0x02] == 0x85) {
-								srcloc->line = bytecode[0x03];
+								line = bytecode[0x03];
 							}
 						}
 					}
 				}
-			} else {
-				srcloc->file = "<?.dm>";
-				srcloc->line = 0xFFFFFFFF;
 			}
-		} else {
-			srcloc->name = NULL;
-			srcloc->function = "<?>";
-			srcloc->file = "<?.dm>";
-			srcloc->line = 0xFFFFFFFF;
-			srcloc->color = 0x44AF44;
 		}
+
+		srclocs[i] = (struct utracy_source_location) {
+			.name = name,
+			.function = function,
+			.file = file,
+			.line = line,
+			.color = color
+		};
 	}
 
 	#undef byond_get_string
@@ -213,7 +202,6 @@ static int byond_init(char unsigned *byondcore) {
 }
 
 static int prof_init(void) {
-#ifdef USE_MICROTRACY
 	HANDLE init_event = CreateEventA(NULL, TRUE, FALSE, NULL);
 	if(NULL == init_event) {
 		return -1;
@@ -234,9 +222,6 @@ static int prof_init(void) {
 
 	/* this waits for client to connect before letting dreamdaemon proceed! */
 	WaitForSingleObject(init_event, INFINITE);
-
-	printf("utracy ready!\n");
-#endif
 
 	void *byondcore;
 	if(GetModuleHandleExA(
@@ -268,7 +253,7 @@ static int prof_init(void) {
 	}
 
 	build_srclocs();
-	___tracy_set_thread_name("byond thread");
+	utracy_emit_thread_name("byond thread");
 
 	if(MH_EnableHook(MH_ALL_HOOKS)) {
 		return -1;
@@ -277,7 +262,7 @@ static int prof_init(void) {
 	return 0;
 }
 
-__declspec(dllexport) char *init(int argc, char **argv) {
+extern __declspec(dllexport) char *init(int argc, char **argv) {
 	(void) argc;
 	(void) argv;
 
@@ -288,7 +273,7 @@ __declspec(dllexport) char *init(int argc, char **argv) {
 	return "prof.dll initialized";
 }
 
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
+extern BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
 	(void) reserved;
 
 	switch(reason) {

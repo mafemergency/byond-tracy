@@ -1,6 +1,9 @@
 #ifndef MICROTRACY_H
 #define MICROTRACY_H
 
+#include "queue.h"
+#include "lz4.h"
+
 #define UTRACY_PROTOCOL_VERSION (56)
 
 #define UTRACY_HANDSHAKE_SHIBBOLETH_SIZE (8)
@@ -183,23 +186,60 @@ __attribute__((packed))
 
 DWORD WINAPI utracy_thread_start(PVOID user);
 
-struct ___tracy_source_location_data {
-	const char *name;
-	const char *function;
-	const char *file;
+struct utracy {
+	struct {
+		long long init_begin;
+		long long init_end;
+		double multiplier;
+		long long resolution;
+		long long delay;
+		long long epoch;
+		long long exectime;
+		DWORD last_heartbeat;
+	} info;
+
+	struct {
+		WSADATA wsadata;
+		SOCKET server;
+		SOCKET client;
+	} sock;
+
+	/* 16KB + 4 bytes for the default LZ4_MEMORY_USAGE 14 */
+	LZ4_stream_t stream;
+
+	int unsigned buf_len;
+	char *frame_buf;
+	/* lz4 compressed buffer */
+	char *buf;
+
+	int unsigned raw_buf_len;
+	int unsigned raw_buf_head;
+	int unsigned raw_buf_tail;
+	char *raw_buf;
+
+	struct event_queue event_queue;
+	int unsigned current_tid;
+	long long thread_time;
+};
+
+extern struct utracy utracy;
+extern int utracy_dequeue_event(struct event *evt);
+extern int utracy_commit(void);
+
+/* profiled program api */
+struct utracy_source_location {
+	char const *name;
+	char const *function;
+	char const *file;
 	int unsigned line;
 	int unsigned color;
 };
 
-struct ___tracy_c_zone_context {
-	int active;
-};
+void utracy_emit_zone_begin(struct utracy_source_location const *const srcloc);
+void utracy_emit_zone_end(void);
+void utracy_emit_zone_color(int unsigned color);
+void utracy_emit_frame_mark(char const *const name);
+void utracy_emit_plot(char const *const name, float value);
+void utracy_emit_thread_name(char const *const name);
 
-struct ___tracy_c_zone_context ___tracy_emit_zone_begin(struct ___tracy_source_location_data const *const srcloc, int active);
-void ___tracy_emit_zone_end(struct ___tracy_c_zone_context ctx);
-void ___tracy_emit_zone_color(struct ___tracy_c_zone_context ctx, int unsigned color);
-
-void ___tracy_emit_plot(char const *const name, float value);
-void ___tracy_emit_frame_mark(char const *const name);
-void ___tracy_set_thread_name(char const *const name);
 #endif

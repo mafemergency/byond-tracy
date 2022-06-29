@@ -20,6 +20,51 @@
 
 #include <windows.h>
 
+struct event_zone_begin {
+	int unsigned tid;
+	long long timestamp;
+	void const *const srcloc;
+};
+
+struct event_zone_end {
+	int unsigned tid;
+	long long timestamp;
+};
+
+struct event_zone_color {
+	int unsigned tid;
+	int unsigned color;
+};
+
+struct event_frame_mark {
+	void const *const name;
+	long long timestamp;
+};
+
+struct event_plot {
+	void const *const name;
+	long long timestamp;
+	float f;
+};
+
+struct event_system_time {
+	long long timestamp;
+	float system_time;
+};
+
+struct event {
+	char unsigned type;
+	union {
+		struct event_system_time system_time;
+		struct event_zone_begin zone_begin;
+		struct event_zone_end zone_end;
+		struct event_zone_color zone_color;
+		struct event_frame_mark frame_mark;
+		struct event_plot plot;
+	};
+};
+
+/*
 struct event {
 	char unsigned type;
 	int unsigned tid;
@@ -40,6 +85,7 @@ struct event {
 		} framemark;
 	};
 };
+*/
 
 struct event_queue {
 #if defined(USE_CRITICAL_SECTION)

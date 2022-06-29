@@ -34,7 +34,7 @@ int event_queue_enqueue(struct event_queue *const restrict queue, struct event c
 		queue->head = queue->buf;
 	}
 
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__clang__)
 	(void) __builtin_memcpy_inline(queue->head + 0, evt + 0, sizeof(struct event));
 #else
 	(void) memcpy(queue->head, evt, sizeof(struct event));
@@ -63,7 +63,7 @@ int event_queue_dequeue(struct event_queue *const restrict queue, struct event *
 		queue->tail = queue->buf;
 	}
 
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__clang__)
 	(void) __builtin_memcpy_inline(evt + 0, queue->tail + 0, sizeof(struct event));
 #else
 	(void) memcpy(evt, queue->tail, sizeof(struct event));
