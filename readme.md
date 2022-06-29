@@ -30,19 +30,35 @@ it is important to remember that dreamdaemon is a 32-bit program, so you must cr
 
 building with clang and ninja (single config):
 ```console
-where clang
-> C:\Program Files\LLVM\bin\clang.exe
-cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+> clang -v
+clang version 14.0.0
+> cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Release
+> cmake --build build
 ```
 
-building with msvc 2019 and msbuild (multi config):
+building with msvc and msbuild (multi config):
 ```console
-vcvarsall.bat x86
-where cl
-> C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC\14.29.30133\bin\Hostx86\x86\cl.exe
-cmake -Bbuild -G"Visual Studio 16 2019" -AWin32
-cmake --build build --config=Release
+> vcvarsall.bat x86
+> cl
+Microsoft (R) C/C++ Optimizing Compiler Version 19.29.30140 for x86
+> cmake -Bbuild -G"Visual Studio 16 2019" -AWin32
+> cmake --build build --config=Release
+```
+
+building with gcc and make:
+```console
+> gcc -v
+Target: x86_64-w64-mingw32
+gcc version 10.3.0 (tdm64-1)
+> cmake -Bbuild -G"MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+> cmake --build build
+```
+
+building without cmake:
+```console
+ninja -f build\msvc.ninja
+ninja -f build\llvm.ninja
+ninja -f build\gcc.ninja
 ```
 
 ## remarks
