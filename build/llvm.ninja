@@ -1,0 +1,63 @@
+root = .
+builddir = $root\build\llvm
+bindir = $root\bin\llvm
+
+cc = clang
+link = clang -fuse-ld=lld-link
+
+cflags = $
+    -fcolor-diagnostics $
+    -fansi-escape-codes $
+    -std=c11 $
+    -m32 $
+    -Ofast3 $
+    -Wall $
+    -Wextra $
+    -Werror $
+    -pedantic $
+    -Isrc $
+    -flto=full
+
+ldflags = $
+    -fcolor-diagnostics $
+    -fansi-escape-codes $
+    -flto=full $
+    -m32 $
+    -Wl,/incremental:no $
+    -Wl,/largeaddressaware $
+    -Wl,/guard:no $
+    -Wl,/machine:x86 $
+    -Wl,/dll $
+    -lws2_32
+
+rule cc
+    command = $cc $cflags -MD -MT $out -MF $out.d -c $in -o $out
+    depfile = $out.d
+    deps = gcc
+
+rule link
+    command = $link $ldflags -Wl,/out:$out $in
+    depfile = $out.d
+    deps = gcc
+
+build $builddir\MinHook\buffer.o: cc src\MinHook\buffer.c
+build $builddir\MinHook\hook.o: cc src\MinHook\hook.c
+build $builddir\MinHook\trampoline.o: cc src\MinHook\trampoline.c
+build $builddir\MinHook\hde\hde32.o: cc src\MinHook\hde\hde32.c
+build $builddir\microtracy\lz4.o: cc src\microtracy\lz4.c
+build $builddir\microtracy\queue.o: cc src\microtracy\queue.c
+build $builddir\microtracy\server.o: cc src\microtracy\server.c
+build $builddir\microtracy\microtracy.o: cc src\microtracy\microtracy.c
+build $builddir\prof.o: cc src\prof.c
+
+build $bindir\prof.dll: $
+    link $
+        $builddir\MinHook\buffer.o $
+        $builddir\MinHook\hook.o $
+        $builddir\MinHook\trampoline.o $
+        $builddir\MinHook\hde\hde32.o $
+        $builddir\microtracy\lz4.o $
+        $builddir\microtracy\queue.o $
+        $builddir\microtracy\server.o $
+        $builddir\microtracy\microtracy.o $
+        $builddir\prof.o

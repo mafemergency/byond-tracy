@@ -1,0 +1,60 @@
+root = .
+builddir = $root\build\msvc
+bindir = $root\bin\msvc
+
+cc = cl
+link = link
+
+cflags = $
+    /std:c11 $
+    /Ox $
+    /GF $
+    /Gy $
+    /GL $
+    /W3 $
+    /WX $
+    /GS- $
+    /Gw $
+    /guard:cf- $
+    /volatile:iso
+
+ldflags = $
+    /ltcg $
+    /incremental:no $
+    /largeaddressaware $
+    /guard:no $
+    /machine:x86 $
+    /dll $
+    ws2_32.lib
+
+rule cc
+    command = $cc /nologo $cflags /showIncludes /c $in /Fo$out
+    description = cc $out
+    deps = msvc
+
+rule link
+    command = $link /nologo $ldflags /out:$out $in
+    description = link $out
+    deps = msvc
+
+build $builddir\MinHook\buffer.o: cc src\MinHook\buffer.c
+build $builddir\MinHook\hook.o: cc src\MinHook\hook.c
+build $builddir\MinHook\trampoline.o: cc src\MinHook\trampoline.c
+build $builddir\MinHook\hde\hde32.o: cc src\MinHook\hde\hde32.c
+build $builddir\microtracy\lz4.o: cc src\microtracy\lz4.c
+build $builddir\microtracy\queue.o: cc src\microtracy\queue.c
+build $builddir\microtracy\server.o: cc src\microtracy\server.c
+build $builddir\microtracy\microtracy.o: cc src\microtracy\microtracy.c
+build $builddir\prof.o: cc src\prof.c
+
+build $bindir\prof.dll: $
+    link $
+        $builddir\MinHook\buffer.o $
+        $builddir\MinHook\hook.o $
+        $builddir\MinHook\trampoline.o $
+        $builddir\MinHook\hde\hde32.o $
+        $builddir\microtracy\lz4.o $
+        $builddir\microtracy\queue.o $
+        $builddir\microtracy\server.o $
+        $builddir\microtracy\microtracy.o $
+        $builddir\prof.o
