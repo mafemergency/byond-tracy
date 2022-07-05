@@ -14,7 +14,8 @@ cflags = $
     -Werror $
     -Isrc $
     -flto $
-    -D_WIN32_WINNT=0x600
+    -D_WIN32_WINNT=0x0601 $
+    -msse2
 
 ldflags = $
     -m32 $
