@@ -1,5 +1,5 @@
-#include <ws2tcpip.h>
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include "server.h"
 #include "queue.h"
@@ -52,7 +52,7 @@ extern int utracy_server_init(void) {
 		addrinfo->ai_protocol,
 		NULL,
 		0,
-		WSA_FLAG_NO_HANDLE_INHERIT
+		0
 	);
 
 

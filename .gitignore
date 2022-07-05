@@ -1,2 +1,4 @@
 # Build directory
 build/
+# Output directory
+bin/
