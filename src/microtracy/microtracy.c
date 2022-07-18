@@ -9,12 +9,11 @@
 #include <stdio.h>
 
 #define DEBUG_DIAGNOSTICS printf("%s %s:%d (wsa=%d)\n", __func__, __FILE__, __LINE__, WSAGetLastError())
-#define TARGET_FRAME_SIZE (256 * 1024)
 
 struct utracy utracy;
 
 /* high resolution x86 timestamp counter - assumes invariant tsc capability */
-static inline long long utracy_tsc(void) {
+long long utracy_tsc(void) {
 #if defined(__clang__) || defined(__GNUC__)
 	return (long long) __builtin_ia32_rdtsc();
 #elif defined(_MSC_VER)
@@ -27,7 +26,7 @@ static inline long long utracy_tsc(void) {
 }
 
 /* lower resolution counter */
-static inline long long utracy_qpc(void) {
+static long long utracy_qpc(void) {
 	LARGE_INTEGER li_counter;
 	QueryPerformanceCounter(&li_counter);
 	return li_counter.QuadPart;
@@ -36,20 +35,20 @@ static inline long long utracy_qpc(void) {
 /* x86 windows fs register points to teb/tib
    thread id is at offset 0x24 */
 #if defined(__clang__) || defined(__GNUC__)
-static inline int unsigned utracy_tid(void) {
+int unsigned utracy_tid(void) {
 	int unsigned tid;
 	__asm__("mov %%fs:0x24, %0;" :"=r"(tid));
 	return tid;
 }
 #elif defined(_MSVC_VER)
-static inline int unsigned utracy_tid(void) {
+int unsigned utracy_tid(void) {
 	__asm {
 		mov eax, fs:[0x24];
 		ret;
 	}
 }
 #else
-static inline int unsigned utracy_tid(void) {
+int unsigned utracy_tid(void) {
 	return GetCurrentThreadId();
 }
 #endif
@@ -96,7 +95,7 @@ static long long utracy_calibrate_resolution(void) {
 }
 
 static long long utracy_calibrate_delay(void) {
-	int unsigned const iterations = 50000;
+	int unsigned const iterations = (EVENT_QUEUE_CAPACITY / 2u) - 1;
 
 	struct utracy_source_location srcloc = {
 		.name = NULL,
@@ -106,30 +105,24 @@ static long long utracy_calibrate_delay(void) {
 		.color = 0
 	};
 
-	struct event zone_begin = {
-		.type = UTRACY_QUEUE_TYPE_ZONEBEGIN,
-		.zone_begin.timestamp = utracy_tsc(),
-		.zone_begin.srcloc = &srcloc
-	};
-
-	struct event zone_end = {
-		.type = UTRACY_QUEUE_TYPE_ZONEEND,
-		.zone_end.timestamp = utracy_tsc()
-	};
-
 	_mm_lfence();
 	long long begin_tsc = utracy_tsc();
+	_mm_lfence();
 
 	for(int unsigned i=0; i<iterations; i++) {
-		event_queue_enqueue(&utracy.event_queue, &zone_begin);
-		event_queue_enqueue(&utracy.event_queue, &zone_end);
+		_mm_lfence();
+		utracy_emit_zone_begin(&srcloc);
+		utracy_emit_zone_end();
+		_mm_lfence();
 	}
 
+	_mm_lfence();
 	long long end_tsc = utracy_tsc();
 	_mm_lfence();
 	long long dt = end_tsc - begin_tsc;
 
-	while(0 == event_queue_dequeue(&utracy.event_queue, &zone_begin));
+	struct event evt;
+	while(0 == utracy_dequeue_event(&evt));
 
 	return dt / (long long) (iterations * 2);
 }
@@ -152,303 +145,24 @@ static void utracy_setup_time(long long *epoch, long long *exectime) {
 	*exectime = *epoch;
 }
 
-static int utracy_recv_all(void *buf, int unsigned size) {
-	char *_buf = buf;
-	DWORD offset = 0;
-	DWORD rx;
-	DWORD flags = 0;
-
-	while(offset < size) {
-		if(SOCKET_ERROR == WSARecv(
-			utracy.sock.client,
-			(WSABUF[]) {{
-				.len = size - offset,
-				.buf = _buf + offset
-			}},
-			1,
-			&rx,
-			&flags,
-			NULL,
-			NULL
-		)) {
-			DEBUG_DIAGNOSTICS;
-			return -1;
-		}
-
-		if(rx == 0) {
-			DEBUG_DIAGNOSTICS;
-			return -1;
-		}
-
-		offset += rx;
+int utracy_dequeue_event(struct event *evt) {
+	if(-1 != event_queue_pop(&utracy.event_queue, evt)) {
+		return 0;
 	}
 
-	return 0;
+	return -1;
 }
 
-static int utracy_send_all(void *buf, int unsigned size) {
-	char *_buf = buf;
-	DWORD offset = 0;
-	DWORD tx;
-	DWORD flags = 0;
-
-	while(offset < size) {
-		if(SOCKET_ERROR == WSASend(
-			utracy.sock.client,
-			(WSABUF[]) {{
-				.len = size - offset,
-				.buf = _buf + offset
-			}},
-			1,
-			&tx,
-			flags,
-			NULL,
-			NULL
-		)) {
-			DEBUG_DIAGNOSTICS;
-			return -1;
-		}
-
-		if(tx == 0) {
-			DEBUG_DIAGNOSTICS;
-			return -1;
-		}
-
-		offset += tx;
-	}
-
-	return 0;
-}
-
-static int utracy_client_negotiate(void) {
-	/* client sends shibboleth */
-	char shibboleth[UTRACY_HANDSHAKE_SHIBBOLETH_SIZE];
-	if(0 != utracy_recv_all(shibboleth, sizeof(shibboleth))) {
-		DEBUG_DIAGNOSTICS;
-		return -1;
-	}
-
-	if(0 != memcmp(shibboleth, UTRACY_HANDSHAKE_SHIBBOLETH, sizeof(shibboleth))) {
-		DEBUG_DIAGNOSTICS;
-		return -1;
-	}
-
-	/* client sends protocol version */
-	int unsigned protocol_version;
-	if(0 != utracy_recv_all(&protocol_version, sizeof(protocol_version))) {
-		DEBUG_DIAGNOSTICS;
-		return -1;
-	}
-
-	if(UTRACY_PROTOCOL_VERSION != protocol_version) {
-		DEBUG_DIAGNOSTICS;
-		char unsigned response = UTRACY_HANDSHAKE_PROTOCOL_MISMATCH;
-		if(0 != utracy_send_all(&response, sizeof(response))) {
-			DEBUG_DIAGNOSTICS;
-			return -1;
-		}
-		return -1;
-	}
-
-	/* server sends ack */
-	char unsigned response = UTRACY_HANDSHAKE_WELCOME;
-	if(0 != utracy_send_all(&response, sizeof(response))) {
-		DEBUG_DIAGNOSTICS;
-		return -1;
-	}
-
-	/* server sends info */
-	struct utracy_welcomemsg welcome_msg = {
-		.timerMul = utracy.info.multiplier,
-		.initBegin = utracy.info.init_begin,
-		.initEnd = utracy.info.init_end,
-		.delay = utracy.info.delay,
-		.resolution = utracy.info.resolution,
-		.epoch = utracy.info.epoch,
-		.exectime = utracy.info.exectime,
-		.pid = 0,
-		.samplingPeriod = 0,
-		.flags = 8,
-		.cpuArch = 0,
-		//.cpuManufacturer = "test",
-		.cpuId = 0
-		//.programName = "test",
-		//.hostInfo = "test"
-	};
-
-	memset(welcome_msg.cpuManufacturer, 0, sizeof(welcome_msg.cpuManufacturer));
-	memset(welcome_msg.programName, 0, sizeof(welcome_msg.programName));
-	memset(welcome_msg.hostInfo, 0, sizeof(welcome_msg.hostInfo));
-	memcpy(welcome_msg.cpuManufacturer, "???", 3);
-	memcpy(welcome_msg.programName, "dreamdaemon.exe", 15);
-	memcpy(welcome_msg.hostInfo, "???", 3);
-
-	if(0 != utracy_send_all(&welcome_msg, sizeof(welcome_msg))) {
-		DEBUG_DIAGNOSTICS;
-		return -1;
-	}
-
-	return 0;
-}
-
-static int utracy_raw_buf_append(void *buf, int unsigned len) {
-	if(len >= utracy.raw_buf_len - utracy.raw_buf_head) {
-		return -1;
-	}
-
-	memcpy(utracy.raw_buf + utracy.raw_buf_head, buf, len);
-	utracy.raw_buf_head += len;
-
-	return 0;
-}
-
-static int utracy_append_heartbeat(void) {
-	DWORD now = GetTickCount();
-
-	if(now - utracy.info.last_heartbeat >= 100) {
-		utracy.info.last_heartbeat = now;
-
-		struct event evt = {
-			.type = UTRACY_QUEUE_TYPE_SYSTIMEREPORT,
-			.system_time.timestamp = utracy_tsc(),
-			.system_time.system_time = 0.0f
-		};
-
-		event_queue_enqueue(&utracy.event_queue, &evt);
-	}
-
-	return 0;
-}
-
-extern int utracy_commit(void) {
-	if(0 < utracy.raw_buf_head - utracy.raw_buf_tail) {
-		if(1 == 1) {
-			utracy.thread_time = 0;
-
-			char unsigned type = UTRACY_QUEUE_TYPE_THREADCONTEXT;
-			if(0 != utracy_raw_buf_append(&type, sizeof(type))) {
-				DEBUG_DIAGNOSTICS;
-				return -1;
-			}
-
-			int unsigned tid = utracy.current_tid;
-			if(0 != utracy_raw_buf_append(&tid, sizeof(tid))) {
-				DEBUG_DIAGNOSTICS;
-				return -1;
-			}
-
-		}
-		{
-			char unsigned type = UTRACY_QUEUE_TYPE_PLOTDATA;
-			if(0 != utracy_raw_buf_append(&type, sizeof(type))) {
-				DEBUG_DIAGNOSTICS;
-				return -1;
-			}
-
-			long long unsigned name = (long long unsigned) (uintptr_t) "(debug) events remaining in queue";
-			if(0 != utracy_raw_buf_append(&name, sizeof(name))) {
-				DEBUG_DIAGNOSTICS;
-				return -1;
-			}
-
-			long long timestamp = utracy_tsc() - utracy.thread_time;
-			utracy.thread_time = timestamp;
-			if(0 != utracy_raw_buf_append(&timestamp, sizeof(timestamp))) {
-				DEBUG_DIAGNOSTICS;
-				return -1;
-			}
-
-			char unsigned plot_type = 0;
-			if(0 != utracy_raw_buf_append(&plot_type, sizeof(plot_type))) {
-				DEBUG_DIAGNOSTICS;
-				return -1;
-			}
-
-			float value = (float) utracy.event_queue.len;
-			if(0 != utracy_raw_buf_append(&value, sizeof(value))) {
-				DEBUG_DIAGNOSTICS;
-				return -1;
-			}
-		}
-
-		int unsigned pending_len;
-		pending_len = utracy.raw_buf_head - utracy.raw_buf_tail;
-
-		do {
-			int unsigned raw_frame_len = min(pending_len, TARGET_FRAME_SIZE);
-
-			/* write compressed buf */
-			int unsigned compressed_len = LZ4_compress_fast_continue(
-				&utracy.stream,
-				/* src */
-				utracy.raw_buf + utracy.raw_buf_tail,
-				/* dst */
-				utracy.buf,
-				/* src len */
-				raw_frame_len,
-				/* dst max len */
-				utracy.buf_len,
-				1
-			);
-
-			/* write compressed buf len */
-#if defined(__clang__)
-			__builtin_memcpy_inline(
-				utracy.frame_buf,
-				&compressed_len,
-				sizeof(compressed_len)
-			);
-#else
-			memcpy(
-				utracy.frame_buf,
-				&compressed_len,
-				sizeof(compressed_len)
-			);
-#endif
-
-			/* transmit frame */
-			if(0 != utracy_send_all(utracy.frame_buf, compressed_len + sizeof(compressed_len))) {
-				return -1;
-			}
-
-			/* advance tail */
-			utracy.raw_buf_tail += raw_frame_len;
-			pending_len = utracy.raw_buf_head - utracy.raw_buf_tail;
-		} while(0 < pending_len);
-
-		/* previous 64kb of uncompressed data must remain unclobbered at the
-		   same memory address! */
-		if(utracy.raw_buf_head > TARGET_FRAME_SIZE * 2) {
-			utracy.raw_buf_head = 0;
-			utracy.raw_buf_tail = 0;
-		}
-	}
-
-	return 0;
-}
-
-extern int utracy_dequeue_event(struct event *evt) {
-	if(0 != event_queue_dequeue(&utracy.event_queue, evt)) {
-		return -1;
-	}
-
-	return 0;
-}
-
-int utracy_init(HANDLE init_event) {
-	event_queue_init(&utracy.event_queue, 65535 * 2);
+int utracy_init(HANDLE initialized_event) {
+	(void) event_queue_init(&utracy.event_queue);
 
 	/* raw uncompressed buffer is fed into lz4 compessor */
-	utracy.raw_buf_len = TARGET_FRAME_SIZE * 3;
+	utracy.raw_buf_len = UTRACY_MAX_FRAME_SIZE * 3;
 	utracy.raw_buf_head = 0;
 	utracy.raw_buf_tail = 0;
-	utracy.raw_buf = VirtualAlloc(NULL, utracy.raw_buf_len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	if(NULL == utracy.raw_buf) {
-		return -1;
-	}
 
 	/* compressed buffer that is to be transmitted */
-	utracy.buf_len = LZ4_compressBound(TARGET_FRAME_SIZE);
+	utracy.buf_len = LZ4_COMPRESSBOUND(UTRACY_MAX_FRAME_SIZE);
 
 	/* |==============frame buf==============|
 	   [length][=========buf=================]
@@ -456,15 +170,8 @@ int utracy_init(HANDLE init_event) {
 	   4 bytes       length bytes */
 
 	size_t buf_offset = sizeof(int unsigned);
-	size_t frame_len = utracy.buf_len + buf_offset;
-
-	utracy.frame_buf = VirtualAlloc(NULL, frame_len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	if(NULL == utracy.frame_buf) {
-		return -1;
-	}
-
-	utracy.buf = utracy.frame_buf + buf_offset;
 	memset(utracy.frame_buf, 0, utracy.buf_len + sizeof(int unsigned));
+	utracy.buf = utracy.frame_buf + buf_offset;
 
 	utracy.info.init_begin = utracy_tsc();
 	utracy.info.multiplier = utracy_calibrate_timer();
@@ -474,6 +181,10 @@ int utracy_init(HANDLE init_event) {
 	/* time since unix epoch */
 	utracy_setup_time(&utracy.info.epoch, &utracy.info.exectime);
 	utracy.info.last_heartbeat = 0;
+	utracy.info.last_pump = GetTickCount64();
+
+	utracy.current_tid = 0;
+	utracy.thread_time = 0;
 
 	/* setup server socket, bind, and listen */
 	if(0 != utracy_server_init()) {
@@ -490,9 +201,14 @@ int utracy_init(HANDLE init_event) {
 	LZ4_resetStream_fast(&utracy.stream);
 
 	utracy.info.init_end = utracy_tsc();
+	(void) SetEvent(initialized_event);
 
+	return 0;
+}
+
+static int utracy_run(HANDLE request_shutdown_event, HANDLE connected_event) {
 	/* accept a client */
-	if(0 != utracy_accept()) {
+	if(0 != utracy_client_accept(request_shutdown_event)) {
 		DEBUG_DIAGNOSTICS;
 		return -1;
 	}
@@ -503,97 +219,101 @@ int utracy_init(HANDLE init_event) {
 		return -1;
 	}
 
-	SetEvent(init_event);
-	utracy.current_tid = 0;
-	utracy.thread_time = 0;
+	(void) SetEvent(connected_event);
 
-	while(TRUE) {
-		if(0 != utracy_append_heartbeat()) {
+	int shutdown_requested = FALSE;
+	while(!shutdown_requested && utracy.sock.connected) {
+		if(0 != utracy_server_pump()) {
 			DEBUG_DIAGNOSTICS;
 			return -1;
 		}
 
-		if(0 != utracy_consume_queue()) {
-			DEBUG_DIAGNOSTICS;
-			return -1;
-		}
+		switch(WaitForSingleObject(request_shutdown_event, 0)) {
+			case WAIT_TIMEOUT:
+				break;
 
-		WSAPOLLFD descriptor = {
-			.fd = utracy.sock.client,
-			.events = POLLRDNORM,
-			.revents = 0
-		};
-
-		while(0 < WSAPoll(&descriptor, 1, 1)) {
-			if(0 != utracy_consume_request()) {
-				DEBUG_DIAGNOSTICS;
-				return -1;
-			}
-		}
-
-		if(0 != utracy_commit()) {
-			DEBUG_DIAGNOSTICS;
-			return -1;
+			case WAIT_OBJECT_0:
+			default:
+				shutdown_requested = TRUE;
+				break;
 		}
 	}
+
+	return 0;
+}
+
+int utracy_destroy(void) {
+	(void) utracy_server_destroy();
+	(void) event_queue_destroy(&utracy.event_queue);
 
 	return 0;
 }
 
 DWORD WINAPI utracy_thread_start(PVOID user) {
-	HANDLE init_event = (HANDLE) user;
+	struct {
+		HANDLE initialized_event;
+		HANDLE connected_event;
+		HANDLE request_shutdown_event;
+	} *params = user;
 
-	int r = utracy_init(init_event);
-	if(0 != r) {
-		ExitProcess(-1);
-		return -1;
+	switch(WaitForSingleObject(params->request_shutdown_event, 0)) {
+		case WAIT_OBJECT_0:
+			return 0;
+		default:
+			break;
 	}
+
+	if(0 == utracy_init(params->initialized_event)) {
+		(void) utracy_run(params->request_shutdown_event, params->connected_event);
+	}
+
+	(void) utracy_destroy();
 
 	return 0;
 }
 
-extern void utracy_emit_zone_begin(struct utracy_source_location const *const srcloc) {
-	event_queue_enqueue(&utracy.event_queue, &(struct event) {
-		.type = UTRACY_QUEUE_TYPE_ZONEBEGIN,
+void utracy_emit_zone_begin(struct utracy_source_location const *const srcloc) {
+	event_queue_push(&utracy.event_queue, &(struct event) {
+		.type = UTRACY_EVT_ZONEBEGIN,
 		.zone_begin.tid = utracy_tid(),
 		.zone_begin.timestamp = utracy_tsc(),
 		.zone_begin.srcloc = (void *) srcloc
 	});
 }
 
-extern void utracy_emit_zone_end(void) {
-	event_queue_enqueue(&utracy.event_queue, &(struct event) {
-		.type = UTRACY_QUEUE_TYPE_ZONEEND,
+void utracy_emit_zone_end(void) {
+	event_queue_push(&utracy.event_queue, &(struct event) {
+		.type = UTRACY_EVT_ZONEEND,
 		.zone_end.tid = utracy_tid(),
 		.zone_end.timestamp = utracy_tsc()
 	});
 }
 
-extern void utracy_emit_zone_color(int unsigned color) {
-	event_queue_enqueue(&utracy.event_queue, &(struct event) {
-		.type = UTRACY_QUEUE_TYPE_ZONECOLOR,
+void utracy_emit_zone_color(int unsigned color) {
+	event_queue_push(&utracy.event_queue, &(struct event) {
+		.type = UTRACY_EVT_ZONECOLOR,
 		.zone_color.tid = utracy_tid(),
 		.zone_color.color = color
 	});
 }
 
-extern void utracy_emit_frame_mark(char const *const name) {
-	event_queue_enqueue(&utracy.event_queue, &(struct event) {
-		.type = UTRACY_QUEUE_TYPE_FRAMEMARKMSG,
+void utracy_emit_frame_mark(char *const name) {
+	event_queue_push(&utracy.event_queue, &(struct event) {
+		.type = UTRACY_EVT_FRAMEMARKMSG,
 		.frame_mark.name = name,
 		.frame_mark.timestamp = utracy_tsc()
 	});
 }
 
-extern void utracy_emit_plot(char const *const name, float value) {
-	event_queue_enqueue(&utracy.event_queue, &(struct event) {
-		.type = UTRACY_QUEUE_TYPE_PLOTDATA,
+void utracy_emit_plot(char *const name, float value) {
+	event_queue_push(&utracy.event_queue, &(struct event) {
+		.type = UTRACY_EVT_PLOTDATA,
 		.plot.name = name,
 		.plot.timestamp = utracy_tsc(),
 		.plot.f = value
 	});
 }
 
-extern void utracy_emit_thread_name(char const *const name) {
+void utracy_emit_thread_name(char *const name) {
 	(void) name;
 }

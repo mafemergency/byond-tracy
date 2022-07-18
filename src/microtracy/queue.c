@@ -1,76 +1,57 @@
-#include <windows.h>
 #include "queue.h"
 
-int event_queue_init(struct event_queue *queue, int unsigned capacity) {
-	queue->buf = VirtualAlloc(NULL, sizeof(struct event) * capacity, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	queue->capacity = capacity;
-	queue->len = 0;
-	queue->dropped = 0;
-	queue->head = queue->buf;
-	queue->tail = queue->buf;
-	INIT_LOCK(&queue->lock);
+#if defined(__STDC_NO_ATOMICS__)
+#	define atomic_load_relaxed(a) *(a)
+#	define atomic_load_acquire(a) *(a)
+#	define atomic_store_seqcst(a, b) *(a) = (b)
+#	define atomic_store_release(a, b) *(a) = (b)
+#else
+#	include <stdatomic.h>
+#	define atomic_load_relaxed(a) atomic_load_explicit((a), memory_order_relaxed)
+#	define atomic_load_acquire(a) atomic_load_explicit((a), memory_order_acquire)
+#	define atomic_store_seqcst(a, b) atomic_store_explicit((a), (b), memory_order_seq_cst)
+#	define atomic_store_release(a, b) atomic_store_explicit((a), (b), memory_order_release)
+#endif
+
+int event_queue_init(struct event_queue *queue) {
+	queue->producer_tail_cache = 0;
+	atomic_store_seqcst(&queue->head, 1);
+	atomic_store_seqcst(&queue->tail, 0);
 	return 0;
 }
 
-void event_queue_destroy(struct event_queue *queue) {
+int event_queue_destroy(struct event_queue *queue) {
 	(void) queue;
-}
-
-int event_queue_enqueue(struct event_queue *const restrict queue, struct event const *const restrict evt) {
-	ACQUIRE_LOCK(&queue->lock);
-	int unsigned i = queue->len;
-
-	/* queue full */
-	if(i == queue->capacity) {
-		RELEASE_LOCK(&queue->lock);
-		InterlockedIncrement(&queue->dropped);
-		return -1;
-	}
-
-	queue->head++;
-
-	/* wrap around */
-	if(queue->head == queue->buf + queue->capacity) {
-		queue->head = queue->buf;
-	}
-
-#if defined(__clang__)
-	(void) __builtin_memcpy_inline(queue->head + 0, evt + 0, sizeof(struct event));
-#else
-	(void) memcpy(queue->head, evt, sizeof(struct event));
-#endif
-
-	queue->len++;
-
-	RELEASE_LOCK(&queue->lock);
 	return 0;
 }
 
-int event_queue_dequeue(struct event_queue *const restrict queue, struct event *const restrict evt) {
-	ACQUIRE_LOCK(&queue->lock);
-	int unsigned i = queue->len;
+int event_queue_push(struct event_queue *const restrict queue, struct event const *const restrict event) {
+	int unsigned store = atomic_load_relaxed(&queue->head);
+	int unsigned next_store = store + 1;
+	if(next_store == EVENT_QUEUE_CAPACITY) {
+		next_store = 0;
+	}
 
-	/* queue empty */
-	if(i == 0) {
-		RELEASE_LOCK(&queue->lock);
+	while(next_store == queue->producer_tail_cache) {
+		queue->producer_tail_cache = atomic_load_acquire(&queue->tail);
+	}
+
+	queue->buf[store] = *event;
+	atomic_store_release(&queue->head, next_store);
+	return 0;
+}
+
+int event_queue_pop(struct event_queue *const restrict queue, struct event *const restrict event) {
+	int unsigned load = atomic_load_relaxed(&queue->tail);
+	int unsigned next_load = load + 1;
+	if(atomic_load_acquire(&queue->head) == load) {
 		return -1;
 	}
 
-	queue->tail++;
-
-	/* wrap around */
-	if(queue->tail == queue->buf + queue->capacity) {
-		queue->tail = queue->buf;
+	*event = queue->buf[load];
+	if(next_load == EVENT_QUEUE_CAPACITY) {
+		next_load = 0;
 	}
-
-#if defined(__clang__)
-	(void) __builtin_memcpy_inline(evt + 0, queue->tail + 0, sizeof(struct event));
-#else
-	(void) memcpy(evt, queue->tail, sizeof(struct event));
-#endif
-
-	queue->len--;
-
-	RELEASE_LOCK(&queue->lock);
+	atomic_store_release(&queue->tail, next_load);
 	return 0;
 }

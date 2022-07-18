@@ -1,7 +1,40 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#include "microtracy.h"
+extern int utracy_server_init(void);
+extern int utracy_server_destroy(void);
+extern int utracy_client_accept(void *);
+extern int utracy_client_negotiate(void);
+extern int utracy_server_pump(void);
+
+#ifdef SERVER_INTERNAL
+
+#define UTRACY_HANDSHAKE_SHIBBOLETH_SIZE (8)
+#define UTRACY_HANDSHAKE_SHIBBOLETH ("TracyPrf")
+#define UTRACY_HANDSHAKE_PENDING (0)
+#define UTRACY_HANDSHAKE_WELCOME (1)
+#define UTRACY_HANDSHAKE_PROTOCOL_MISMATCH (2)
+#define UTRACY_HANDSHAKE_NOT_AVAILABLE (3)
+#define UTRACY_HANDSHAKE_DROPPED (4)
+
+#define UTRACY_QUERY_TERMINATE (0)
+#define UTRACY_QUERY_STRING (1)
+#define UTRACY_QUERY_THREADSTRING (2)
+#define UTRACY_QUERY_SOURCELOCATION (3)
+#define UTRACY_QUERY_PLOTNAME (4)
+#define UTRACY_QUERY_FRAMENAME (5)
+#define UTRACY_QUERY_PARAMETER (6)
+#define UTRACY_QUERY_FIBERNAME (7)
+#define UTRACY_QUERY_DISCONNECT (8)
+#define UTRACY_QUERY_CALLSTACKFRAME (9)
+#define UTRACY_QUERY_EXTERNALNAME (10)
+#define UTRACY_QUERY_SYMBOL (11)
+#define UTRACY_QUERY_SYMBOLCODE (12)
+#define UTRACY_QUERY_CODELOCATION (13)
+#define UTRACY_QUERY_SOURCECODE (14)
+#define UTRACY_QUERY_DATATRANSFER (15)
+#define UTRACY_QUERY_DATATRANSFERPART (16)
+
 #include <assert.h>
 
 #if defined(__clang__) || defined(__GNUC__)
@@ -10,6 +43,25 @@
 #	define PACKED
 #	pragma pack(push, 1)
 #endif
+
+struct network_welcome {
+	double timerMul;
+	long long initBegin;
+	long long initEnd;
+	long long delay;
+	long long resolution;
+	long long epoch;
+	long long exectime;
+	long long pid;
+	long long samplingPeriod;
+	char unsigned flags;
+	char unsigned cpuArch;
+	char cpuManufacturer[12];
+	int unsigned cpuId;
+	char programName[64];
+	char hostInfo[1024];
+} PACKED;
+_Static_assert(1178 == sizeof(struct network_welcome), "incorrect size");
 
 struct network_recv_request {
 	char unsigned type;
@@ -96,9 +148,5 @@ _Static_assert(13 == sizeof(struct network_heartbeat), "incorrect size");
 #	pragma pack(pop)
 #endif
 
-extern int utracy_server_init(void);
-extern int utracy_consume_request(void);
-extern int utracy_consume_queue(void);
-extern int utracy_accept(void);
-
+#endif
 #endif

@@ -4,8 +4,11 @@ byond-tracy glues together a byond server with the tracy profiler allowing you t
 ## supported byond versions
 | windows  | linux    |
 | -------- | -------- |
-| 514.1584 |          |
-| 514.1583 |          |
+| 514.*    |          |
+
+## supported tracy versions
+0.8.1
+0.8.2
 
 ## usage
 simply call `init` from `prof.dll` to begin collecting profile data and connect using [tracy-server](https://github.com/wolfpld/tracy/releases) `Tracy.exe`
@@ -45,7 +48,7 @@ Microsoft (R) C/C++ Optimizing Compiler Version 19.29.30140 for x86
 > cmake --build build --config=Release
 ```
 
-building with gcc and make:
+building with gcc and make (single config):
 ```console
 > gcc -v
 Target: x86_64-w64-mingw32
@@ -56,11 +59,10 @@ gcc version 10.3.0 (tdm64-1)
 
 building without cmake:
 ```console
-ninja -f build\msvc.ninja
-ninja -f build\llvm.ninja
-ninja -f build\gcc.ninja
+> ninja -f build\msvc.ninja
+> ninja -f build\llvm.ninja
+> ninja -f build\gcc.ninja
 ```
 
 ## remarks
 byond-tracy is in its infancy and is not production ready for live servers.
-at present there is no mechanism to disable the profiler, selectively profile specific procs, no cleanup on server shutdown/reboot, etc. byond-tracy will buffer profile data in memory until a connection is made with tracy-server to consume the events meaning your server will ecounter an out-of-memory situation should you neglect to connect.
