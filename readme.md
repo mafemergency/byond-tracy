@@ -44,9 +44,13 @@ examples:
 ```console
 cl.exe /nologo /std:c11 /O2 /LD prof.c ws2_32.lib /Fe:prof.dll
 ```
-```consoleclang.exe -std=c11 -m32 -shared -Ofast3 -fuse-ld=lld-link prof.c -lws2_32 -o prof.dll
+
+```console
+clang.exe -std=c11 -m32 -shared -Ofast3 -fuse-ld=lld-link prof.c -lws2_32 -o prof.dll
 ```
-```consolegcc -std=c11 -m32 -shared -fPIC -Ofast -s prof.c -pthread -o libprof.so
+
+```console
+gcc -std=c11 -m32 -shared -fPIC -Ofast -s prof.c -pthread -o libprof.so
 ```
 
 ## remarks
