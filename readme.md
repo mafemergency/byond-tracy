@@ -30,15 +30,24 @@ simply call `init` from `prof.dll` to begin collecting profile data and connect 
 
 ## env vars
 set these env vars before launching dreamdaemon to control which node and service to bind
-```UTRACY_BIND_ADDRESS```
-```UTRACY_BIND_PORT```
+```console
+UTRACY_BIND_ADDRESS
+```
+
+```console
+UTRACY_BIND_PORT
+```
 
 ## building
 no build system included, simply invoke your preferred c11 compiler.
 examples:
-`cl.exe /nologo /std:c11 /O2 /LD prof.c ws2_32.lib /Fe:prof.dll`
-`clang.exe -std=c11 -m32 -shared -Ofast3 -fuse-ld=lld-link prof.c -lws2_32 -o prof.dll`
-`gcc -std=c11 -m32 -shared -fPIC -Ofast -s prof.c -pthread -o libprof.so`
+```console
+cl.exe /nologo /std:c11 /O2 /LD prof.c ws2_32.lib /Fe:prof.dll
+```
+```consoleclang.exe -std=c11 -m32 -shared -Ofast3 -fuse-ld=lld-link prof.c -lws2_32 -o prof.dll
+```
+```consolegcc -std=c11 -m32 -shared -fPIC -Ofast -s prof.c -pthread -o libprof.so
+```
 
 ## remarks
 byond-tracy is in its infancy and is not production ready for live servers.
