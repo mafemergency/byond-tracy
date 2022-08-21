@@ -42,15 +42,15 @@ UTRACY_BIND_PORT
 no build system included, simply invoke your preferred c11 compiler.
 examples:
 ```console
-cl.exe /nologo /std:c11 /O2 /LD prof.c ws2_32.lib /Fe:prof.dll
+cl.exe /nologo /std:c11 /O2 /LD /DNDEBUG prof.c ws2_32.lib /Fe:prof.dll
 ```
 
 ```console
-clang.exe -std=c11 -m32 -shared -Ofast3 -fuse-ld=lld-link prof.c -lws2_32 -o prof.dll
+clang.exe -std=c11 -m32 -shared -Ofast3 -DNDEBUG -fuse-ld=lld-link prof.c -lws2_32 -o prof.dll
 ```
 
 ```console
-gcc -std=c11 -m32 -shared -fPIC -Ofast -s prof.c -pthread -o libprof.so
+gcc -std=c11 -m32 -shared -fPIC -Ofast -s -DNDEBUG prof.c -pthread -o libprof.so
 ```
 
 ## remarks
