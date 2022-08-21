@@ -30,8 +30,8 @@ simply call `init` from `prof.dll` to begin collecting profile data and connect 
 
 ## env vars
 set these env vars before launching dreamdaemon to control which node and service to bind
-`UTRACY_BIND_ADDRESS`
-`UTRACY_BIND_PORT`
+```UTRACY_BIND_ADDRESS```
+```UTRACY_BIND_PORT```
 
 ## building
 no build system included, simply invoke your preferred c11 compiler.
