@@ -115,11 +115,50 @@ _Static_assert(sizeof(long long) == 8, "incorrect size");
 #endif
 
 #include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
 #include <assert.h>
+
+#if (__STDC_HOSTED__ == 1)
+#	include <stdlib.h>
+#	include <string.h>
+#endif
+
 #if !defined(__STDC_NO_ATOMICS__)
 #	include <stdatomic.h>
+#endif
+
+#if (__STDC_HOSTED__ == 0)
+void *memset(void *const a, int value, size_t len) {
+	for(size_t i=0; i<len; i++) {
+		*((char *) a + i) = value;
+	}
+	return a;
+}
+
+void *memcpy(void *const restrict dst, void const *const restrict src, size_t len) {
+	for(size_t i=0; i<len; i++) {
+		*((char *) dst + i) = *((char *) src + i);
+	}
+	return dst;
+}
+
+int memcmp(void const *a, void const *b, size_t len) {
+	for(size_t i=0; i<len; i++) {
+		char unsigned _a = *(char unsigned *) a;
+		char unsigned _b = *(char unsigned *) b;
+		if(_a != _b) {
+			return (_a - _b);
+		}
+	}
+	return 0;
+}
+
+size_t strlen(char const *const a) {
+	size_t len = 0;
+	for(char const *p=a; *p; p++) {
+		len++;
+	}
+	return len;
+}
 #endif
 
 #if defined(max)
@@ -172,11 +211,10 @@ _Static_assert(sizeof(long long) == 8, "incorrect size");
 
 
 /* debugging */
-#define UTRACY_DEBUG
 #if defined(UTRACY_DEBUG) || defined(DEBUG)
 #	include <stdio.h>
-#	define LOG_DEBUG_ERROR printf("err: %s %s:%d\n", __func__, __FILE__, __LINE__)
-#	define LOG_INFO(...) printf(__VA_ARGS__)
+#	define LOG_DEBUG_ERROR fprintf(stderr, "err: %s %s:%d\n", __func__, __FILE__, __LINE__)
+#	define LOG_INFO(...) fprintf(stdout, __VA_ARGS__)
 #else
 #	define LOG_DEBUG_ERROR
 #	define LOG_INFO(...)
@@ -264,22 +302,19 @@ _Static_assert(sizeof(struct misc) == 36, "incorrect size");
 _Static_assert(sizeof(struct proc) >= 4, "incorrect size");
 
 /*
-   LZ4 - Fast LZ compression algorithm
-   Copyright (C) 2011-2020, Yann Collet.
-
+ *  LZ4 - Fast LZ compression algorithm
+ *  Header File
+ *  Copyright (C) 2011-2020, Yann Collet.
    BSD 2-Clause License (http://www.opensource.org/licenses/bsd-license.php)
-
    Redistribution and use in source and binary forms, with or without
    modification, are permitted provided that the following conditions are
    met:
-
        * Redistributions of source code must retain the above copyright
    notice, this list of conditions and the following disclaimer.
        * Redistributions in binary form must reproduce the above
    copyright notice, this list of conditions and the following disclaimer
    in the documentation and/or other materials provided with the
    distribution.
-
    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -291,7 +326,6 @@ _Static_assert(sizeof(struct proc) >= 4, "incorrect size");
    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
    You can contact the author at :
     - LZ4 homepage : http://www.lz4.org
     - LZ4 source repository : https://github.com/lz4/lz4
@@ -319,11 +353,11 @@ _Static_assert(sizeof(struct proc) >= 4, "incorrect size");
 #define LZ4_ACCELERATION_DEFAULT 1
 #define LZ4_ACCELERATION_MAX 65537
 
-#ifndef LZ4_DISTANCE_MAX
+#if !defined(LZ4_DISTANCE_MAX)
 #	define LZ4_DISTANCE_MAX 65535
 #endif
 #define LZ4_DISTANCE_ABSOLUTE_MAX 65535
-#if(LZ4_DISTANCE_MAX > LZ4_DISTANCE_ABSOLUTE_MAX)
+#if (LZ4_DISTANCE_MAX > LZ4_DISTANCE_ABSOLUTE_MAX)
 #	error "LZ4_DISTANCE_MAX is too big : must be <= 65535"
 #endif
 
@@ -442,7 +476,7 @@ void LZ4_wildCopy8(void *dstPtr, const void *srcPtr, void *dstEnd) {
 	LZ4_byte *const e = (LZ4_byte *) dstEnd;
 
 	do {
-		UTRACY_MEMCPY(d, s, 8);
+		(void) UTRACY_MEMCPY(d, s, 8);
 		d += 8;
 		s += 8;
 	} while (d < e);
@@ -551,7 +585,7 @@ void LZ4_putIndexOnHash(LZ4_u32 idx, LZ4_u32 h, void *tableBase, LZ4_tableType_t
 		case LZ4_byPtr: {assert(0); return;}
 		case LZ4_byU32: {LZ4_u32 *hashTable = (LZ4_u32 *) tableBase; hashTable[h] = idx; return;}
 		case LZ4_byU16: {LZ4_u16 *hashTable = (LZ4_u16 *) tableBase; assert(idx < 65536u); hashTable[h] = (LZ4_u16) idx; return;}
-    }
+	}
 }
 
 UTRACY_INTERNAL UTRACY_INLINE
@@ -1314,7 +1348,7 @@ int event_queue_init(void) {
 }
 
 UTRACY_INTERNAL UTRACY_INLINE
-int event_queue_push(struct event const *const event) {
+void event_queue_push(struct event const *const event) {
 	int unsigned store = atomic_load_relaxed(&utracy.queue.head);
 	int unsigned next_store = store + 1;
 
@@ -1322,14 +1356,13 @@ int event_queue_push(struct event const *const event) {
 		next_store = 0;
 	}
 
-	while(next_store == utracy.queue.producer_tail_cache) {
+	while(unlikely(next_store == utracy.queue.producer_tail_cache)) {
 		utracy.queue.producer_tail_cache = atomic_load_acquire(&utracy.queue.tail);
 	}
 
 	utracy.queue.events[store] = *event;
 
 	atomic_store_release(&utracy.queue.head, next_store);
-	return 0;
 }
 
 UTRACY_INTERNAL UTRACY_INLINE
@@ -1592,7 +1625,7 @@ static struct utracy_source_location srclocs[0x10000];
 
 UTRACY_INTERNAL UTRACY_INLINE
 void utracy_emit_zone_begin(struct utracy_source_location const *const srcloc) {
-	(void) event_queue_push(&(struct event) {
+	event_queue_push(&(struct event) {
 		.type = UTRACY_EVT_ZONEBEGIN,
 		.zone_begin.tid = utracy_tid(),
 		.zone_begin.timestamp = utracy_tsc(),
@@ -1602,7 +1635,7 @@ void utracy_emit_zone_begin(struct utracy_source_location const *const srcloc) {
 
 UTRACY_INTERNAL UTRACY_INLINE
 void utracy_emit_zone_end(void) {
-	(void) event_queue_push(&(struct event) {
+	event_queue_push(&(struct event) {
 		.type = UTRACY_EVT_ZONEEND,
 		.zone_end.tid = utracy_tid(),
 		.zone_end.timestamp = utracy_tsc()
@@ -1611,7 +1644,7 @@ void utracy_emit_zone_end(void) {
 
 UTRACY_INTERNAL UTRACY_INLINE
 void utracy_emit_zone_color(int unsigned color) {
-	(void) event_queue_push(&(struct event) {
+	event_queue_push(&(struct event) {
 		.type = UTRACY_EVT_ZONECOLOR,
 		.zone_color.tid = utracy_tid(),
 		.zone_color.color = color
@@ -1620,7 +1653,7 @@ void utracy_emit_zone_color(int unsigned color) {
 
 UTRACY_INTERNAL UTRACY_INLINE
 void utracy_emit_frame_mark(char *const name) {
-	(void) event_queue_push(&(struct event) {
+	event_queue_push(&(struct event) {
 		.type = UTRACY_EVT_FRAMEMARKMSG,
 		.frame_mark.name = name,
 		.frame_mark.timestamp = utracy_tsc()
@@ -1718,10 +1751,9 @@ int utracy_server_init(void) {
 	};
 
 	struct addrinfo *result;
-	int gai_err;
 
 retry:
-	switch((gai_err = getaddrinfo(node, service, &hints, &result))) {
+	switch(getaddrinfo(node, service, &hints, &result)) {
 		case 0:
 			break;
 
@@ -1799,12 +1831,13 @@ int utracy_client_recv(void *const buf, int unsigned len) {
 		int received = recv(utracy.sock.client, (char *) buf + offset, len - offset, 0);
 
 		if(0 >= received) {
-			printf("utrac_client_recv err %d\n", received);
 			LOG_DEBUG_ERROR;
 
+#if defined(UTRACY_LINUX)
 			if(EINTR == errno) {
 				continue;
 			}
+#endif
 
 			return -1;
 		}
@@ -1825,9 +1858,11 @@ int utracy_client_send(void *const buf, int unsigned len) {
 		if(0 >= sent) {
 			LOG_DEBUG_ERROR;
 
+#if defined(UTRACY_LINUX)
 			if(EINTR == errno) {
 				continue;
 			}
+#endif
 
 			return -1;
 		}
@@ -2478,8 +2513,6 @@ void *utracy_server_thread_start(void *user) {
 #endif
 	(void) user;
 
-	int first_try = 1;
-
 	do {
 		if(0 == utracy.sock.connected) {
 #if defined(UTRACY_WINDOWS)
@@ -2489,7 +2522,7 @@ void *utracy_server_thread_start(void *user) {
 				.revents = 0
 			};
 
-			int polled = WSAPoll(&descriptor, 1, first_try ? 250 : 1);
+			int polled = WSAPoll(&descriptor, 1, 1);
 
 #elif defined(UTRACY_LINUX)
 			struct pollfd descriptor = {
@@ -2498,11 +2531,9 @@ void *utracy_server_thread_start(void *user) {
 				.revents = 0
 			};
 
-			int polled = poll(&descriptor, 1, first_try ? 250 : 1);
+			int polled = poll(&descriptor, 1, 1);
 
 #endif
-
-			first_try = 0;
 
 			if(0 < polled) {
 				if(0 != utracy_client_accept()) {
@@ -2532,18 +2563,18 @@ void *utracy_server_thread_start(void *user) {
 #if defined(UTRACY_WINDOWS)
 	ExitThread(0);
 #elif defined(UTRACY_LINUX)
-	pthread_exit(0);
+	pthread_exit(NULL);
 #endif
 }
 
 /* byond hooks */
 UTRACY_INTERNAL
 struct object UTRACY_WINDOWS_CDECL UTRACY_LINUX_REGPARM(3) exec_proc(struct proc *proc) {
-	if(proc->procdef < 0x100000) {
+	if(likely(proc->procdef < 0x100000)) {
 		utracy_emit_zone_begin(srclocs + proc->procdef);
 
 		/* procs with pre-existing contexts are resuming from sleep */
-		if(proc->ctx != NULL) {
+		if(unlikely(proc->ctx != NULL)) {
 			utracy_emit_zone_color(0xAF4444);
 		}
 
@@ -2794,9 +2825,9 @@ static int unsigned const byond_offsets[][7] = {
 
 UTRACY_INTERNAL
 void build_srclocs(void) {
-	#define byond_get_string(id) (id < *byond.strings_len ? *(*byond.strings + id) : NULL)
-	#define byond_get_misc(id) (id < *byond.miscs_len ? *(*byond.miscs + id) : NULL)
-	#define byond_get_procdef(id) (id < *byond.procdefs_len ? *byond.procdefs + id : NULL)
+#define byond_get_string(id) (id < *byond.strings_len ? *(*byond.strings + id) : NULL)
+#define byond_get_misc(id) (id < *byond.miscs_len ? *(*byond.miscs + id) : NULL)
+#define byond_get_procdef(id) (id < *byond.procdefs_len ? *byond.procdefs + id : NULL)
 
 	for(int unsigned i=0; i<0x10000; i++) {
 		char const *name = NULL;
@@ -2843,9 +2874,9 @@ void build_srclocs(void) {
 		};
 	}
 
-	#undef byond_get_string
-	#undef byond_get_misc
-	#undef byond_get_procdef
+#undef byond_get_string
+#undef byond_get_misc
+#undef byond_get_procdef
 }
 
 /* byond api */
@@ -3021,3 +3052,9 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL destroy(int argc, char **argv) {
 
 	return "0";
 }
+
+#if (__STDC_HOSTED__ == 0)
+BOOL WINAPI DllMainCRTStartup(HINSTANCE instance, DWORD reason, LPVOID reserved) {
+	return TRUE;
+}
+#endif
