@@ -4,6 +4,7 @@ byond-tracy glues together a byond server with the tracy profiler allowing you t
 ## supported byond versions
 | windows  | linux    |
 | -------- | -------- |
+| 515.1590 | 515.1590 |
 | 514.*    | 514.*    |
 
 ## supported tracy versions
@@ -20,7 +21,7 @@ simply call `init` from `prof.dll` to begin collecting profile data and connect 
 		if(UNIX) lib = "libprof.so"
 		else CRASH("unsupported platform")
 
-	var/init = call(lib, "init")()
+	var/init = call_ext(lib, "init")()
 	if("0" != init) CRASH("[lib] init error: [init]")
 
 /world/New()
