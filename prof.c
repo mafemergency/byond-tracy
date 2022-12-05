@@ -116,6 +116,7 @@ _Static_assert(sizeof(long long) == 8, "incorrect size");
 
 #include <stddef.h>
 #include <assert.h>
+#include <stdio.h>
 
 #if (__STDC_HOSTED__ == 1)
 #	include <stdlib.h>
@@ -223,8 +224,6 @@ size_t strlen(char const *const a) {
 /* config */
 #define EVENT_QUEUE_CAPACITY (1u << 18u)
 _Static_assert((EVENT_QUEUE_CAPACITY & (EVENT_QUEUE_CAPACITY - 1)) == 0, "EVENT_QUEUE_CAPACITY must be a power of 2");
-#define UTRACY_LATENCY (100000000ll)
-#define UTRACY_MAX_FRAME_SIZE (256u * 1024u)
 
 /* byond types */
 struct object {
@@ -301,919 +300,6 @@ _Static_assert(sizeof(struct procdef) == 36, "incorrect size");
 _Static_assert(sizeof(struct misc) == 36, "incorrect size");
 _Static_assert(sizeof(struct proc) >= 4, "incorrect size");
 
-/*
- *  LZ4 - Fast LZ compression algorithm
- *  Header File
- *  Copyright (C) 2011-2020, Yann Collet.
-   BSD 2-Clause License (http://www.opensource.org/licenses/bsd-license.php)
-   Redistribution and use in source and binary forms, with or without
-   modification, are permitted provided that the following conditions are
-   met:
-       * Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
-       * Redistributions in binary form must reproduce the above
-   copyright notice, this list of conditions and the following disclaimer
-   in the documentation and/or other materials provided with the
-   distribution.
-   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-   You can contact the author at :
-    - LZ4 homepage : http://www.lz4.org
-    - LZ4 source repository : https://github.com/lz4/lz4
-*/
-
-#define LZ4_MEMORY_USAGE_MIN 10
-//#define LZ4_MEMORY_USAGE_DEFAULT 14
-#define LZ4_MEMORY_USAGE_DEFAULT 20
-#define LZ4_MEMORY_USAGE_MAX 20
-
-#if !defined(LZ4_MEMORY_USAGE)
-#	define LZ4_MEMORY_USAGE LZ4_MEMORY_USAGE_DEFAULT
-#endif
-
-#if (LZ4_MEMORY_USAGE < LZ4_MEMORY_USAGE_MIN)
-#	error "LZ4_MEMORY_USAGE is too small !"
-#endif
-
-#if (LZ4_MEMORY_USAGE > LZ4_MEMORY_USAGE_MAX)
-#	error "LZ4_MEMORY_USAGE is too large !"
-#endif
-
-#define LZ4_MAX_INPUT_SIZE 0x7E000000
-#define LZ4_COMPRESSBOUND(isize) ((unsigned) (isize) > (unsigned) LZ4_MAX_INPUT_SIZE ? 0 : (isize) + ((isize) / 255) + 16)
-#define LZ4_ACCELERATION_DEFAULT 1
-#define LZ4_ACCELERATION_MAX 65537
-
-#if !defined(LZ4_DISTANCE_MAX)
-#	define LZ4_DISTANCE_MAX 65535
-#endif
-#define LZ4_DISTANCE_ABSOLUTE_MAX 65535
-#if (LZ4_DISTANCE_MAX > LZ4_DISTANCE_ABSOLUTE_MAX)
-#	error "LZ4_DISTANCE_MAX is too big : must be <= 65535"
-#endif
-
-#define ML_BITS 4u
-#define ML_MASK  ((1U << ML_BITS) - 1u)
-#define RUN_BITS (8u - ML_BITS)
-#define RUN_MASK ((1U << RUN_BITS) - 1u)
-
-#define MINMATCH 4
-#define WILDCOPYLENGTH 8
-#define LASTLITERALS 5
-#define MFLIMIT 12
-#define MATCH_SAFEGUARD_DISTANCE ((2 * WILDCOPYLENGTH) - MINMATCH)
-#define FASTLOOP_SAFE_DISTANCE 64
-#define LZ4_minLength (MFLIMIT + 1)
-
-#define LZ4_64Klimit (65536 + (MFLIMIT - 1))
-#define LZ4_skipTrigger ((LZ4_u32) 6u)
-
-#define LZ4_HASHLOG (LZ4_MEMORY_USAGE - 2)
-#define LZ4_HASHTABLESIZE (1 << LZ4_MEMORY_USAGE)
-#define LZ4_HASH_SIZE_U32 (1 << LZ4_HASHLOG)
-
-#define LZ4_STREAMSIZE ((1ul << LZ4_MEMORY_USAGE) + 32u)
-#define LZ4_STREAMSIZE_VOIDP (LZ4_STREAMSIZE / sizeof(void *))
-
-#define LZ4_STATIC_ASSERT(a) _Static_assert((a), "")
-
-typedef char signed LZ4_i8;
-typedef char unsigned LZ4_byte;
-typedef short unsigned LZ4_u16;
-typedef int unsigned LZ4_u32;
-typedef long long unsigned LZ4_u64;
-typedef union LZ4_stream_u LZ4_stream_t;
-typedef struct LZ4_stream_t_internal LZ4_stream_t_internal;
-typedef size_t reg_t;
-
-typedef enum {
-	LZ4_clearedTable = 0,
-	LZ4_byPtr,
-	LZ4_byU32,
-	LZ4_byU16
-} LZ4_tableType_t;
-
-typedef enum {
-	LZ4_notLimited = 0,
-	LZ4_limitedOutput = 1,
-	LZ4_fillOutput = 2
-} LZ4_limitedOutput_directive;
-
-typedef enum {
-	LZ4_noDict = 0,
-	LZ4_withPrefix64k,
-	LZ4_usingExtDict,
-	LZ4_usingDictCtx
-} LZ4_dict_directive;
-
-typedef enum {
-	LZ4_noDictIssue = 0,
-	LZ4_dictSmall
-} LZ4_dictIssue_directive;
-
-struct LZ4_stream_t_internal {
-	LZ4_u32 hashTable[LZ4_HASH_SIZE_U32];
-	LZ4_u32 currentOffset;
-	LZ4_u32 tableType;
-	LZ4_byte const *dictionary;
-	LZ4_stream_t_internal const *dictCtx;
-	LZ4_u32 dictSize;
-};
-
-union LZ4_stream_u {
-	void *table[LZ4_STREAMSIZE_VOIDP];
-	LZ4_stream_t_internal internal_donotuse;
-};
-
-#pragma pack(push, 1)
-typedef union {
-	LZ4_u16 u16;
-	LZ4_u32 u32;
-	reg_t uArch;
-} LZ4_unalign;
-#pragma pack(pop)
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_u16 LZ4_read16(void const *ptr) {
-	return ((LZ4_unalign const *) ptr)->u16;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_u32 LZ4_read32(void const *ptr) {
-	return ((LZ4_unalign const *) ptr)->u32;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-reg_t LZ4_read_ARCH(void const *ptr) {
-	return ((LZ4_unalign const *) ptr)->uArch;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_write16(void *memPtr, LZ4_u16 value) {
-	((LZ4_unalign *) memPtr)->u16 = value;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_write32(void *memPtr, LZ4_u32 value) {
-	((LZ4_unalign *) memPtr)->u32 = value;
-}
-
-#define LZ4_writeLE16 LZ4_write16
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_wildCopy8(void *dstPtr, const void *srcPtr, void *dstEnd) {
-	LZ4_byte *d = (LZ4_byte *) dstPtr;
-	LZ4_byte const *s = (LZ4_byte const *) srcPtr;
-	LZ4_byte *const e = (LZ4_byte *) dstEnd;
-
-	do {
-		(void) UTRACY_MEMCPY(d, s, 8);
-		d += 8;
-		s += 8;
-	} while (d < e);
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-unsigned LZ4_NbCommonBytes(reg_t val) {
-	assert(val != 0);
-
-#if defined(UTRACY_MSVC)
-	long unsigned r;
-	_BitScanForward(&r, (LZ4_u32) val);
-	return (unsigned) r >> 3u;
-
-#elif __has_builtin(__builtin_ctx)
-	return (unsigned) __builtin_ctz((LZ4_u32) val) >> 3u;
-
-#else
-	LZ4_u32 const m = 0x01010101u;
-	return (unsigned) ((((val - 1) ^ val) & (m - 1)) * m) >> 24u;
-
-#endif
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-unsigned LZ4_count(LZ4_byte const *pIn, LZ4_byte const *pMatch, LZ4_byte const *pInLimit) {
-	LZ4_byte const *const pStart = pIn;
-
-	if(likely(pIn < pInLimit - (sizeof(reg_t) - 1))) {
-		reg_t const diff = LZ4_read_ARCH(pMatch) ^ LZ4_read_ARCH(pIn);
-		if(!diff) {
-			pIn += sizeof(reg_t);
-			pMatch += sizeof(reg_t);
-		} else {
-			return LZ4_NbCommonBytes(diff);
-		}
-	}
-
-	while(likely(pIn < pInLimit - (sizeof(reg_t) - 1))) {
-		reg_t const diff = LZ4_read_ARCH(pMatch) ^ LZ4_read_ARCH(pIn);
-		if(!diff) {
-			pIn += sizeof(reg_t);
-			pMatch += sizeof(reg_t);
-			continue;
-		}
-		pIn += LZ4_NbCommonBytes(diff);
-		return (unsigned) (pIn - pStart);
-	}
-
-	if((sizeof(reg_t) == 8) && (pIn < (pInLimit - 3)) && (LZ4_read32(pMatch) == LZ4_read32(pIn))) {
-		pIn += 4;
-		pMatch += 4;
-	}
-
-	if((pIn < (pInLimit - 1)) && (LZ4_read16(pMatch) == LZ4_read16(pIn))) {
-		pIn += 2;
-		pMatch += 2;
-	}
-
-	if((pIn < pInLimit) && (*pMatch == *pIn)) {
-		pIn++;
-	}
-
-	return (unsigned)(pIn - pStart);
-}
-
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_u32 LZ4_hash4(LZ4_u32 sequence, LZ4_tableType_t const tableType) {
-	if(tableType == LZ4_byU16) {
-		return ((sequence * 2654435761u) >> ((MINMATCH * 8) - (LZ4_HASHLOG + 1)));
-	} else {
-		return ((sequence * 2654435761u) >> ((MINMATCH * 8) - LZ4_HASHLOG));
-	}
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_u32 LZ4_hash5(LZ4_u64 sequence, LZ4_tableType_t const tableType) {
-	LZ4_u32 const hashLog = (tableType == LZ4_byU16) ? LZ4_HASHLOG + 1 : LZ4_HASHLOG;
-	LZ4_u64 const prime5bytes = 889523592379llu;
-	return (LZ4_u32) (((sequence << 24) * prime5bytes) >> (64 - hashLog));
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_u32 LZ4_hashPosition(void const *const p, LZ4_tableType_t const tableType) {
-	if((sizeof(reg_t) == 8) && (tableType != LZ4_byU16)) return LZ4_hash5(LZ4_read_ARCH(p), tableType);
-	return LZ4_hash4(LZ4_read32(p), tableType);
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_clearHash(LZ4_u32 h, void *tableBase, LZ4_tableType_t const tableType) {
-	switch(tableType) {
-		default:
-		case LZ4_clearedTable: {assert(0); return;}
-		case LZ4_byPtr: {LZ4_byte const **hashTable = (LZ4_byte const **) tableBase; hashTable[h] = NULL; return;}
-		case LZ4_byU32: {LZ4_u32 *hashTable = (LZ4_u32 *) tableBase; hashTable[h] = 0; return;}
-		case LZ4_byU16: {LZ4_u16 *hashTable = (LZ4_u16 *) tableBase; hashTable[h] = 0; return;}
-	}
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_putIndexOnHash(LZ4_u32 idx, LZ4_u32 h, void *tableBase, LZ4_tableType_t const tableType) {
-	switch(tableType) {
-		default:
-		case LZ4_clearedTable:
-		case LZ4_byPtr: {assert(0); return;}
-		case LZ4_byU32: {LZ4_u32 *hashTable = (LZ4_u32 *) tableBase; hashTable[h] = idx; return;}
-		case LZ4_byU16: {LZ4_u16 *hashTable = (LZ4_u16 *) tableBase; assert(idx < 65536u); hashTable[h] = (LZ4_u16) idx; return;}
-	}
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_putPositionOnHash(LZ4_byte const *p, LZ4_u32 h, void *tableBase, LZ4_tableType_t const tableType, LZ4_byte const *srcBase) {
-	switch(tableType) {
-		case LZ4_clearedTable: {assert(0); return;}
-		case LZ4_byPtr: {LZ4_byte const **hashTable = (LZ4_byte const **) tableBase; hashTable[h] = p; return;}
-		case LZ4_byU32: {LZ4_u32 *hashTable = (LZ4_u32 *) tableBase; hashTable[h] = (LZ4_u32) (p - srcBase); return;}
-		case LZ4_byU16: {LZ4_u16 *hashTable = (LZ4_u16 *) tableBase; hashTable[h] = (LZ4_u16) (p - srcBase); return;}
-	}
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_putPosition(LZ4_byte const *p, void *tableBase, LZ4_tableType_t tableType, LZ4_byte const *srcBase) {
-	LZ4_u32 const h = LZ4_hashPosition(p, tableType);
-	LZ4_putPositionOnHash(p, h, tableBase, tableType, srcBase);
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_u32 LZ4_getIndexOnHash(LZ4_u32 h, void const *tableBase, LZ4_tableType_t tableType) {
-	LZ4_STATIC_ASSERT(LZ4_MEMORY_USAGE > 2);
-	if(tableType == LZ4_byU32) {
-		const LZ4_u32 *const hashTable = (const LZ4_u32 *) tableBase;
-		assert(h < (1U << (LZ4_MEMORY_USAGE - 2)));
-		return hashTable[h];
-	}
-	if(tableType == LZ4_byU16) {
-		const LZ4_u16 *const hashTable = (const LZ4_u16 *) tableBase;
-		assert(h < (1U << (LZ4_MEMORY_USAGE - 1)));
-		return hashTable[h];
-	}
-	assert(0);
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_byte const *LZ4_getPositionOnHash(LZ4_u32 h, void const *tableBase, LZ4_tableType_t tableType, LZ4_byte const *srcBase) {
-	if(tableType == LZ4_byPtr) {LZ4_byte const *const *hashTable = (LZ4_byte const *const *) tableBase; return hashTable[h];}
-	if(tableType == LZ4_byU32) {LZ4_u32 const *const hashTable = (LZ4_u32 const *) tableBase; return hashTable[h] + srcBase;}
-	{
-		LZ4_u16 const *const hashTable = (LZ4_u16 const *) tableBase;
-		return hashTable[h] + srcBase;
-	}
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_byte const *LZ4_getPosition(LZ4_byte const *p, void const *tableBase, LZ4_tableType_t tableType, LZ4_byte const *srcBase) {
-	LZ4_u32 const h = LZ4_hashPosition(p, tableType);
-	return LZ4_getPositionOnHash(h, tableBase, tableType, srcBase);
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_prepareTable(LZ4_stream_t_internal *const cctx, int const inputSize, LZ4_tableType_t const tableType) {
-	if((LZ4_tableType_t) cctx->tableType != LZ4_clearedTable) {
-		assert(inputSize >= 0);
-
-		if(
-			(LZ4_tableType_t) cctx->tableType != tableType ||
-			((tableType == LZ4_byU16) && cctx->currentOffset + (unsigned) inputSize >= 0xFFFFU) ||
-			((tableType == LZ4_byU32) && cctx->currentOffset > 1073741824u) ||
-			tableType == LZ4_byPtr ||
-			inputSize >= 4096
-		) {
-			(void) UTRACY_MEMSET(cctx->hashTable, 0, LZ4_HASHTABLESIZE);
-			cctx->currentOffset = 0;
-			cctx->tableType = (LZ4_u32) LZ4_clearedTable;
-		}
-	}
-
-	if(cctx->currentOffset != 0 && tableType == LZ4_byU32) {
-		cctx->currentOffset += 65536u;
-	}
-
-	cctx->dictCtx = NULL;
-	cctx->dictionary = NULL;
-	cctx->dictSize = 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_renormDictT(LZ4_stream_t_internal *LZ4_dict, int nextSize) {
-	assert(nextSize >= 0);
-	if(LZ4_dict->currentOffset + (unsigned) nextSize > 0x80000000u) {
-		LZ4_u32 const delta = LZ4_dict->currentOffset - 65536u;
-		LZ4_byte const *dictEnd = LZ4_dict->dictionary + LZ4_dict->dictSize;
-		for(int i=0; i<LZ4_HASH_SIZE_U32; i++) {
-			if(LZ4_dict->hashTable[i] < delta) LZ4_dict->hashTable[i] = 0;
-			else LZ4_dict->hashTable[i] -= delta;
-		}
-
-		LZ4_dict->currentOffset = 65536u;
-		if(LZ4_dict->dictSize > 65536u) LZ4_dict->dictSize = 65536u;
-		LZ4_dict->dictionary = dictEnd - LZ4_dict->dictSize;
-	}
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int LZ4_compress_generic_validated(LZ4_stream_t_internal *const cctx, char const *const source, char *const dest, int const inputSize, int *inputConsumed, int const maxOutputSize, LZ4_limitedOutput_directive const outputDirective, LZ4_tableType_t const tableType, LZ4_dict_directive const dictDirective, LZ4_dictIssue_directive const dictIssue, int const acceleration) {
-	int result;
-	LZ4_byte const *ip = (LZ4_byte const *) source;
-
-	LZ4_u32 const startIndex = cctx->currentOffset;
-	LZ4_byte const *base = (LZ4_byte const *) source - startIndex;
-	LZ4_byte const *lowLimit;
-
-	LZ4_stream_t_internal const *dictCtx = (LZ4_stream_t_internal const *) cctx->dictCtx;
-	LZ4_byte const *const dictionary = dictDirective == LZ4_usingDictCtx ? dictCtx->dictionary : cctx->dictionary;
-	LZ4_u32 const dictSize = dictDirective == LZ4_usingDictCtx ? dictCtx->dictSize : cctx->dictSize;
-	LZ4_u32 const dictDelta = (dictDirective == LZ4_usingDictCtx) ? startIndex - dictCtx->currentOffset : 0;
-
-	int const maybe_extMem = (dictDirective == LZ4_usingExtDict) || (dictDirective == LZ4_usingDictCtx);
-	LZ4_u32 const prefixIdxLimit = startIndex - dictSize;
-	LZ4_byte const *const dictEnd = dictionary ? dictionary + dictSize : dictionary;
-	LZ4_byte const *anchor = (LZ4_byte const *) source;
-	LZ4_byte const *const iend = ip + inputSize;
-	LZ4_byte const *const mflimitPlusOne = iend - MFLIMIT + 1;
-	LZ4_byte const *const matchlimit = iend - LASTLITERALS;
-
-	LZ4_byte const *dictBase = (dictionary == NULL) ? NULL : (dictDirective == LZ4_usingDictCtx) ? dictionary + dictSize - dictCtx->currentOffset : dictionary + dictSize - startIndex;
-
-	LZ4_byte *op = (LZ4_byte *) dest;
-	LZ4_byte *const olimit = op + maxOutputSize;
-
-	LZ4_u32 offset = 0;
-	LZ4_u32 forwardH;
-
-	assert(ip != NULL);
-	if(outputDirective == LZ4_fillOutput && maxOutputSize < 1) {
-		return 0;
-	}
-	if((tableType == LZ4_byU16) && (inputSize >= LZ4_64Klimit)) {
-		return 0;
-	}
-	if(tableType == LZ4_byPtr) assert(dictDirective == LZ4_noDict);
-	assert(acceleration >= 1);
-
-	lowLimit = (LZ4_byte const *) source - (dictDirective == LZ4_withPrefix64k ? dictSize : 0);
-
-	if(dictDirective == LZ4_usingDictCtx) {
-		cctx->dictCtx = NULL;
-		cctx->dictSize = (LZ4_u32) inputSize;
-	} else {
-		cctx->dictSize += (LZ4_u32) inputSize;
-	}
-
-	cctx->currentOffset += (LZ4_u32) inputSize;
-	cctx->tableType = (LZ4_u32) tableType;
-
-	if(inputSize < LZ4_minLength) goto _last_literals;
-
-	LZ4_putPosition(ip, cctx->hashTable, tableType, base);
-	ip++;
-	forwardH = LZ4_hashPosition(ip, tableType);
-
-	for(;;) {
-		LZ4_byte const *match;
-		LZ4_byte *token;
-		LZ4_byte const *filledIp;
-
-		if(tableType == LZ4_byPtr) {
-			LZ4_byte const *forwardIp = ip;
-			int step = 1;
-			int searchMatchNb = acceleration << LZ4_skipTrigger;
-			do {
-				LZ4_u32 const h = forwardH;
-				ip = forwardIp;
-				forwardIp += step;
-				step = (searchMatchNb++ >> LZ4_skipTrigger);
-
-				if(unlikely(forwardIp > mflimitPlusOne)) goto _last_literals;
-				assert(ip < mflimitPlusOne);
-
-				match = LZ4_getPositionOnHash(h, cctx->hashTable, tableType, base);
-				forwardH = LZ4_hashPosition(forwardIp, tableType);
-				LZ4_putPositionOnHash(ip, h, cctx->hashTable, tableType, base);
-
-			} while((match + LZ4_DISTANCE_MAX < ip) || (LZ4_read32(match) != LZ4_read32(ip)));
-
-		} else {
-			LZ4_byte const *forwardIp = ip;
-			int step = 1;
-			int searchMatchNb = acceleration << LZ4_skipTrigger;
-			do {
-				LZ4_u32 const h = forwardH;
-				LZ4_u32 const current = (LZ4_u32) (forwardIp - base);
-				LZ4_u32 matchIndex = LZ4_getIndexOnHash(h, cctx->hashTable, tableType);
-				assert(matchIndex <= current);
-				assert(forwardIp - base < (ptrdiff_t) (2147483648u - 1u));
-				ip = forwardIp;
-				forwardIp += step;
-				step = (searchMatchNb++ >> LZ4_skipTrigger);
-
-				if(unlikely(forwardIp > mflimitPlusOne)) goto _last_literals;
-				assert(ip < mflimitPlusOne);
-
-				if(dictDirective == LZ4_usingDictCtx) {
-					if(matchIndex < startIndex) {
-						assert(tableType == LZ4_byU32);
-						matchIndex = LZ4_getIndexOnHash(h, dictCtx->hashTable, LZ4_byU32);
-						match = dictBase + matchIndex;
-						matchIndex += dictDelta;
-						lowLimit = dictionary;
-					} else {
-						match = base + matchIndex;
-						lowLimit = (LZ4_byte const *) source;
-					}
-				} else if(dictDirective == LZ4_usingExtDict) {
-					if(matchIndex < startIndex) {
-						assert(startIndex - matchIndex >= MINMATCH);
-						assert(dictBase);
-						match = dictBase + matchIndex;
-						lowLimit = dictionary;
-					} else {
-						match = base + matchIndex;
-						lowLimit = (LZ4_byte const *)source;
-					}
-				} else {
-					match = base + matchIndex;
-				}
-
-				forwardH = LZ4_hashPosition(forwardIp, tableType);
-				LZ4_putIndexOnHash(current, h, cctx->hashTable, tableType);
-
-				if((dictIssue == LZ4_dictSmall) && (matchIndex < prefixIdxLimit)) {
-					continue;
-				}
-
-				assert(matchIndex < current);
-
-				if(((tableType != LZ4_byU16) || (LZ4_DISTANCE_MAX < LZ4_DISTANCE_ABSOLUTE_MAX)) && (matchIndex + LZ4_DISTANCE_MAX < current)) {
-					continue;
-				}
-
-				assert((current - matchIndex) <= LZ4_DISTANCE_MAX);
-
-				if(LZ4_read32(match) == LZ4_read32(ip)) {
-					if(maybe_extMem) offset = current - matchIndex;
-					break;
-				}
-
-			} while(1);
-		}
-
-		filledIp = ip;
-		while(((ip > anchor) & (match > lowLimit)) && (unlikely(ip[-1] == match[-1]))) {
-			ip--;
-			match--;
-		}
-
-		{
-			unsigned const litLength = (unsigned) (ip - anchor);
-			token = op++;
-			if((outputDirective == LZ4_limitedOutput) && (unlikely(op + litLength + (2 + 1 + LASTLITERALS) + (litLength / 255) > olimit))) {
-				return 0;
-			}
-
-			if((outputDirective == LZ4_fillOutput) && (unlikely(op + (litLength + 240) / 255 + litLength + 2 + 1 + MFLIMIT - MINMATCH > olimit))) {
-				op--;
-				goto _last_literals;
-			}
-
-			if(litLength >= RUN_MASK) {
-				int len = (int) (litLength - RUN_MASK);
-				*token = (RUN_MASK << ML_BITS);
-				for(; len >= 255; len -= 255) *op++ = 255;
-				*op++ = (LZ4_byte) len;
-			} else {
-				*token = (LZ4_byte) (litLength << ML_BITS);
-			}
-
-			LZ4_wildCopy8(op, anchor, op + litLength);
-			op += litLength;
-		}
-
-_next_match:
-		if((outputDirective == LZ4_fillOutput) && (op + 2 + 1 + MFLIMIT - MINMATCH > olimit)) {
-			op = token;
-			goto _last_literals;
-		}
-
-		if(maybe_extMem) {
-			assert(offset <= LZ4_DISTANCE_MAX && offset > 0);
-			LZ4_writeLE16(op, (LZ4_u16) offset);
-			op += 2;
-		} else  {
-			assert(ip - match <= LZ4_DISTANCE_MAX);
-			LZ4_writeLE16(op, (LZ4_u16) (ip - match));
-			op += 2;
-		}
-
-		{
-			unsigned matchCode;
-
-			if((dictDirective == LZ4_usingExtDict || dictDirective == LZ4_usingDictCtx) && (lowLimit == dictionary)) {
-				LZ4_byte const *limit = ip + (dictEnd - match);
-				assert(dictEnd > match);
-				if(limit > matchlimit) limit = matchlimit;
-				matchCode = LZ4_count(ip + MINMATCH, match + MINMATCH, limit);
-				ip += (size_t) matchCode + MINMATCH;
-				if(ip == limit) {
-					unsigned const more = LZ4_count(limit, (LZ4_byte const *) source, matchlimit);
-					matchCode += more;
-					ip += more;
-				}
-			} else {
-				matchCode = LZ4_count(ip + MINMATCH, match + MINMATCH, matchlimit);
-				ip += (size_t) matchCode + MINMATCH;
-			}
-
-			if((outputDirective) && (unlikely(op + (1 + LASTLITERALS) + (matchCode + 240) / 255 > olimit))) {
-				if(outputDirective == LZ4_fillOutput) {
-					LZ4_u32 newMatchCode = 15 - 1 + ((LZ4_u32) (olimit - op) - 1 - LASTLITERALS) * 255;
-					ip -= matchCode - newMatchCode;
-					assert(newMatchCode < matchCode);
-					matchCode = newMatchCode;
-					if(unlikely(ip <= filledIp)) {
-						LZ4_byte const *ptr;
-						for(ptr = ip; ptr <= filledIp; ++ptr) {
-							LZ4_u32 const h = LZ4_hashPosition(ptr, tableType);
-							LZ4_clearHash(h, cctx->hashTable, tableType);
-						}
-					}
-				} else {
-					assert(outputDirective == LZ4_limitedOutput);
-					return 0;
-				}
-			}
-
-			if(matchCode >= ML_MASK) {
-				*token += ML_MASK;
-				matchCode -= ML_MASK;
-				LZ4_write32(op, 0xFFFFFFFFu);
-				while(matchCode >= 4 * 255) {
-					op += 4;
-					LZ4_write32(op, 0xFFFFFFFFu);
-					matchCode -= 4 * 255;
-				}
-				op += matchCode / 255;
-				*op++ = (LZ4_byte) (matchCode % 255);
-			} else {
-				*token += (LZ4_byte)(matchCode);
-			}
-		}
-
-		assert(!(outputDirective == LZ4_fillOutput && op + 1 + LASTLITERALS > olimit));
-
-		anchor = ip;
-
-		if(ip >= mflimitPlusOne) {
-			break;
-		}
-
-		LZ4_putPosition(ip - 2, cctx->hashTable, tableType, base);
-
-		if(tableType == LZ4_byPtr) {
-			match = LZ4_getPosition(ip, cctx->hashTable, tableType, base);
-			LZ4_putPosition(ip, cctx->hashTable, tableType, base);
-			if((match + LZ4_DISTANCE_MAX >= ip) && (LZ4_read32(match) == LZ4_read32(ip))) {
-				token = op++;
-				*token = 0;
-				goto _next_match;
-			}
-
-		} else {
-			LZ4_u32 const h = LZ4_hashPosition(ip, tableType);
-			LZ4_u32 const current = (LZ4_u32) (ip-base);
-			LZ4_u32 matchIndex = LZ4_getIndexOnHash(h, cctx->hashTable, tableType);
-			assert(matchIndex < current);
-			if(dictDirective == LZ4_usingDictCtx) {
-				if(matchIndex < startIndex) {
-					matchIndex = LZ4_getIndexOnHash(h, dictCtx->hashTable, LZ4_byU32);
-					match = dictBase + matchIndex;
-					lowLimit = dictionary;
-					matchIndex += dictDelta;
-				} else {
-					match = base + matchIndex;
-					lowLimit = (LZ4_byte const *) source;
-				}
-			} else if(dictDirective == LZ4_usingExtDict) {
-				if(matchIndex < startIndex) {
-					assert(dictBase);
-					match = dictBase + matchIndex;
-					lowLimit = dictionary;
-				} else {
-					match = base + matchIndex;
-					lowLimit = (LZ4_byte const *) source;
-				}
-			} else {
-				match = base + matchIndex;
-			}
-
-			LZ4_putIndexOnHash(current, h, cctx->hashTable, tableType);
-			assert(matchIndex < current);
-			if(((dictIssue == LZ4_dictSmall) ? (matchIndex >= prefixIdxLimit) : 1) && (((tableType == LZ4_byU16) && (LZ4_DISTANCE_MAX == LZ4_DISTANCE_ABSOLUTE_MAX)) ? 1 : (matchIndex + LZ4_DISTANCE_MAX >= current)) && (LZ4_read32(match) == LZ4_read32(ip))) {
-				token = op++;
-				*token = 0;
-				if(maybe_extMem) offset = current - matchIndex;
-				goto _next_match;
-			}
-		}
-
-		forwardH = LZ4_hashPosition(++ip, tableType);
-	}
-
-_last_literals:
-	{
-		size_t lastRun = (size_t) (iend - anchor);
-		if((outputDirective) && (op + lastRun + 1 + ((lastRun + 255 - RUN_MASK) / 255) > olimit)) {
-			if(outputDirective == LZ4_fillOutput) {
-				assert(olimit >= op);
-				lastRun  = (size_t) (olimit-op) - 1;
-				lastRun -= (lastRun + 256 - RUN_MASK) / 256;
-			} else {
-				assert(outputDirective == LZ4_limitedOutput);
-				return 0;
-			}
-		}
-
-		if(lastRun >= RUN_MASK) {
-			size_t accumulator = lastRun - RUN_MASK;
-			*op++ = RUN_MASK << ML_BITS;
-			for(; accumulator >= 255; accumulator-=255) *op++ = 255;
-			*op++ = (LZ4_byte) accumulator;
-		} else {
-			*op++ = (LZ4_byte) (lastRun << ML_BITS);
-		}
-		(void) UTRACY_MEMCPY(op, anchor, lastRun);
-		ip = anchor + lastRun;
-		op += lastRun;
-	}
-
-	if(outputDirective == LZ4_fillOutput) {
-		*inputConsumed = (int) (((char const *) ip) - source);
-	}
-	result = (int) (((char *) op) - dest);
-	assert(result > 0);
-	return result;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int LZ4_compress_generic(LZ4_stream_t_internal *const cctx, char const *const src, char *const dst, int const srcSize, int *inputConsumed, int const dstCapacity, LZ4_limitedOutput_directive const outputDirective, LZ4_tableType_t const tableType, LZ4_dict_directive const dictDirective, LZ4_dictIssue_directive const dictIssue, int const acceleration) {
-	if((LZ4_u32) srcSize > (LZ4_u32) LZ4_MAX_INPUT_SIZE) {
-		return 0;
-	}
-
-	if(srcSize == 0) {
-		if(outputDirective != LZ4_notLimited && dstCapacity <= 0) return 0;
-		assert(outputDirective == LZ4_notLimited || dstCapacity >= 1);
-		assert(dst != NULL);
-		dst[0] = 0;
-		if(outputDirective == LZ4_fillOutput) {
-			assert(inputConsumed != NULL);
-			*inputConsumed = 0;
-		}
-		return 1;
-	}
-
-	assert(src != NULL);
-
-	return LZ4_compress_generic_validated(
-		cctx,
-		src,
-		dst,
-		srcSize,
-		inputConsumed,
-		dstCapacity,
-		outputDirective,
-		tableType,
-		dictDirective,
-		dictIssue,
-		acceleration
-	);
-}
-
-
-UTRACY_INTERNAL UTRACY_INLINE
-int LZ4_compress_fast_continue(LZ4_stream_t *LZ4_stream, char const *source, char *dest, int inputSize, int maxOutputSize, int acceleration) {
-	LZ4_tableType_t const tableType = LZ4_byU32;
-	LZ4_stream_t_internal *const streamPtr = &LZ4_stream->internal_donotuse;
-	char const *dictEnd = streamPtr->dictSize ? (char const *) streamPtr->dictionary + streamPtr->dictSize : NULL;
-
-	LZ4_renormDictT(streamPtr, inputSize);
-	if(acceleration < 1) acceleration = LZ4_ACCELERATION_DEFAULT;
-	if(acceleration > LZ4_ACCELERATION_MAX) acceleration = LZ4_ACCELERATION_MAX;
-
-	if((streamPtr->dictSize < 4) && (dictEnd != source) && (inputSize > 0) && (streamPtr->dictCtx == NULL)) {
-		streamPtr->dictSize = 0;
-		streamPtr->dictionary = (LZ4_byte const *) source;
-		dictEnd = source;
-	}
-
-	{
-		char const *const sourceEnd = source + inputSize;
-		if((sourceEnd > (char const *) streamPtr->dictionary) && (sourceEnd < dictEnd)) {
-			streamPtr->dictSize = (LZ4_u32) (dictEnd - sourceEnd);
-			if(streamPtr->dictSize > 65536u) streamPtr->dictSize = 65536u;
-			if(streamPtr->dictSize < 4u) streamPtr->dictSize = 0;
-			streamPtr->dictionary = (LZ4_byte const *) dictEnd - streamPtr->dictSize;
-		}
-	}
-
-	if(dictEnd == source) {
-		if((streamPtr->dictSize < 65536u) && (streamPtr->dictSize < streamPtr->currentOffset)) {
-			return LZ4_compress_generic(
-				streamPtr,
-				source,
-				dest,
-				inputSize,
-				NULL,
-				maxOutputSize,
-				LZ4_limitedOutput,
-				tableType,
-				LZ4_withPrefix64k,
-				LZ4_dictSmall,
-				acceleration
-			);
-		} else {
-			return LZ4_compress_generic(
-				streamPtr,
-				source,
-				dest,
-				inputSize,
-				NULL,
-				maxOutputSize,
-				LZ4_limitedOutput,
-				tableType,
-				LZ4_withPrefix64k,
-				LZ4_noDictIssue,
-				acceleration
-			);
-		}
-	}
-
-	{
-		int result;
-		if(streamPtr->dictCtx) {
-			if(inputSize > 4096) {
-				(void) UTRACY_MEMCPY(streamPtr, streamPtr->dictCtx, sizeof(*streamPtr));
-				result = LZ4_compress_generic(
-					streamPtr,
-					source,
-					dest,
-					inputSize,
-					NULL,
-					maxOutputSize,
-					LZ4_limitedOutput,
-					tableType,
-					LZ4_usingExtDict,
-					LZ4_noDictIssue,
-					acceleration
-				);
-			} else {
-				result = LZ4_compress_generic(
-					streamPtr,
-					source,
-					dest,
-					inputSize,
-					NULL,
-					maxOutputSize,
-					LZ4_limitedOutput,
-					tableType,
-					LZ4_usingDictCtx,
-					LZ4_noDictIssue,
-					acceleration
-				);
-			}
-		} else {
-			if ((streamPtr->dictSize < 65536u) && (streamPtr->dictSize < streamPtr->currentOffset)) {
-				result = LZ4_compress_generic(
-					streamPtr,
-					source,
-					dest,
-					inputSize,
-					NULL,
-					maxOutputSize,
-					LZ4_limitedOutput,
-					tableType,
-					LZ4_usingExtDict,
-					LZ4_dictSmall,
-					acceleration
-				);
-			} else {
-				result = LZ4_compress_generic(
-					streamPtr,
-					source,
-					dest,
-					inputSize,
-					NULL,
-					maxOutputSize,
-					LZ4_limitedOutput,
-					tableType,
-					LZ4_usingExtDict,
-					LZ4_noDictIssue,
-					acceleration
-				);
-			}
-		}
-
-		streamPtr->dictionary = (LZ4_byte const *) source;
-		streamPtr->dictSize = (LZ4_u32) inputSize;
-		return result;
-	}
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int LZ4_isAligned(void const *ptr, size_t alignment) {
-	return ((size_t) ptr & (alignment - 1)) == 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-size_t LZ4_stream_t_alignment(void) {
-	typedef struct {char c; LZ4_stream_t t;} t_a;
-	return sizeof(t_a) - sizeof(LZ4_stream_t);
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-LZ4_stream_t *LZ4_initStream(void *buffer, size_t size) {
-	if(buffer == NULL) {return NULL;}
-	if(size < sizeof(LZ4_stream_t)) {return NULL;}
-	if(!LZ4_isAligned(buffer, LZ4_stream_t_alignment())) return NULL;
-	(void) UTRACY_MEMSET(buffer, 0, sizeof(LZ4_stream_t_internal));
-	return (LZ4_stream_t *) buffer;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-void LZ4_resetStream_fast(LZ4_stream_t *ctx) {
-	LZ4_prepareTable(&(ctx->internal_donotuse), 0, LZ4_byU32);
-}
-
 /* queue */
 #if defined(__STDC_NO_ATOMICS__)
 #	define atomic_load_relaxed(a) *(a)
@@ -1229,7 +315,7 @@ void LZ4_resetStream_fast(LZ4_stream_t *ctx) {
 
 struct event_zone_begin {
 	int unsigned tid;
-	void  *srcloc;
+	int unsigned srcloc;
 	long long timestamp;
 };
 
@@ -1292,34 +378,9 @@ static struct {
 		long long exec_time;
 	} info;
 
-	struct {
-		int connected;
-#if defined(UTRACY_WINDOWS)
-		WSADATA wsa;
-		SOCKET server;
-		SOCKET client;
-#elif defined(UTRACY_LINUX)
-		int server;
-		int client;
-#endif
-	} sock;
-
-	struct {
-		struct {
-			int unsigned tid;
-			long long timestamp;
-		} cur_thread;
-
-		long long prev_commit;
-		LZ4_stream_t stream;
-
-		int unsigned raw_buf_head;
-		int unsigned raw_buf_tail;
-		char raw_buf[UTRACY_MAX_FRAME_SIZE * 3];
-
-		int unsigned frame_buf_len;
-		char frame_buf[sizeof(int) + LZ4_COMPRESSBOUND(UTRACY_MAX_FRAME_SIZE)];
-	} data;
+	HANDLE thread;
+	HANDLE quit;
+	FILE *fstream;
 
 	struct {
 		int unsigned producer_tail_cache;
@@ -1587,32 +648,6 @@ long long unix_timestamp(void) {
 #define UTRACY_EVT_ZONECOLOR (62)
 #define UTRACY_EVT_FRAMEMARKMSG (64)
 
-#define UTRACY_RESPONSE_SOURCELOCATION (67)
-#define UTRACY_RESPONSE_ACKSERVERQUERYNOOP (87)
-#define UTRACY_RESPONSE_ACKSOURCECODENOTAVAILABLE (88)
-#define UTRACY_RESPONSE_ACKSYMBOLCODENOTAVAILABLE (89)
-#define UTRACY_RESPONSE_STRINGDATA (94)
-#define UTRACY_RESPONSE_THREADNAME (95)
-#define UTRACY_RESPONSE_PLOTNAME (96)
-
-#define UTRACY_QUERY_TERMINATE (0)
-#define UTRACY_QUERY_STRING (1)
-#define UTRACY_QUERY_THREADSTRING (2)
-#define UTRACY_QUERY_SOURCELOCATION (3)
-#define UTRACY_QUERY_PLOTNAME (4)
-#define UTRACY_QUERY_FRAMENAME (5)
-#define UTRACY_QUERY_PARAMETER (6)
-#define UTRACY_QUERY_FIBERNAME (7)
-#define UTRACY_QUERY_DISCONNECT (8)
-#define UTRACY_QUERY_CALLSTACKFRAME (9)
-#define UTRACY_QUERY_EXTERNALNAME (10)
-#define UTRACY_QUERY_SYMBOL (11)
-#define UTRACY_QUERY_SYMBOLCODE (12)
-#define UTRACY_QUERY_CODELOCATION (13)
-#define UTRACY_QUERY_SOURCECODE (14)
-#define UTRACY_QUERY_DATATRANSFER (15)
-#define UTRACY_QUERY_DATATRANSFERPART (16)
-
 struct utracy_source_location {
 	char const *name;
 	char const *function;
@@ -1621,15 +656,15 @@ struct utracy_source_location {
 	int unsigned color;
 };
 
-static struct utracy_source_location srclocs[0x10000];
+static struct utracy_source_location srclocs[0x10002];
 
 UTRACY_INTERNAL UTRACY_INLINE
-void utracy_emit_zone_begin(struct utracy_source_location const *const srcloc) {
+void utracy_emit_zone_begin(int unsigned proc) {
 	event_queue_push(&(struct event) {
 		.type = UTRACY_EVT_ZONEBEGIN,
 		.zone_begin.tid = utracy_tid(),
 		.zone_begin.timestamp = utracy_tsc(),
-		.zone_begin.srcloc = (void *) srcloc
+		.zone_begin.srcloc = proc/*(void *) srcloc*/
 	});
 }
 
@@ -1666,18 +701,10 @@ long long calibrate_delay(void) {
 
 	int unsigned const iterations = (EVENT_QUEUE_CAPACITY / 2u) - 1u;
 
-	struct utracy_source_location srcloc = {
-		.name = NULL,
-		.function = __func__,
-		.file = __FILE__,
-		.line = 0,
-		.color = 0
-	};
-
 	long long clk0 = utracy_tsc();
 
 	for(int unsigned i=0; i<iterations; i++) {
-		utracy_emit_zone_begin(&srcloc);
+		utracy_emit_zone_begin(0);
 		utracy_emit_zone_end();
 	}
 
@@ -1691,819 +718,32 @@ long long calibrate_delay(void) {
 	return dclk / (long long) (iterations * 2);
 }
 
-/* server */
-UTRACY_INTERNAL
-int utracy_server_init(void) {
-#if defined(UTRACY_WINDOWS)
-	if(0 != WSAStartup(MAKEWORD(2, 2), &utracy.sock.wsa)) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-#endif
-
-	utracy.sock.server = socket(AF_INET, SOCK_STREAM, 0);
-	if(0 == utracy.sock.server) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-#if defined(UTRACY_WINDOWS)
-	char opt = 1;
-#elif defined(UTRACY_LINUX)
-	int opt = 1;
-#endif
-	if(0 != setsockopt(utracy.sock.server, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-#if defined(UTRACY_WINDOWS)
-	char node[64] = "127.0.0.1\0";
-	if(sizeof(node) < GetEnvironmentVariable("UTRACY_BIND_ADDRESS", node, sizeof(node))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	char service[6] = "8086\0";
-	if(sizeof(service) < GetEnvironmentVariable("UTRACY_BIND_PORT", service, sizeof(service))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-#elif defined(UTRACY_LINUX)
-	char *node = getenv("UTRACY_BIND_ADDRESS");
-	if(NULL == node) {
-		node = "127.0.0.1";
-	}
-
-	char *service = getenv("UTRACY_BIND_PORT");
-	if(NULL == service) {
-		service = "8086";
-	}
-
-#endif
-
-	struct addrinfo hints = {
-		.ai_flags = AI_PASSIVE,
-		.ai_family = AF_INET,
-		.ai_socktype = SOCK_STREAM,
-		.ai_protocol = IPPROTO_TCP
-	};
-
-	struct addrinfo *result;
-
-retry:
-	switch(getaddrinfo(node, service, &hints, &result)) {
-		case 0:
-			break;
-
-		case EAI_AGAIN:
-			goto retry;
-
-		default:
-			LOG_DEBUG_ERROR;
-			return -1;
-	}
-
-	if(NULL == result) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	socklen_t addrlen = result->ai_addrlen;
-	struct sockaddr_in *addr = (struct sockaddr_in *) result->ai_addr;
-
-	if(0 > bind(utracy.sock.server, (struct sockaddr *) addr, addrlen)) {
-		LOG_DEBUG_ERROR;
-		freeaddrinfo(result);
-		return -1;
-	}
-
-	if(0 > listen(utracy.sock.server, 2)) {
-		LOG_DEBUG_ERROR;
-		freeaddrinfo(result);
-		return -1;
-	}
-
-#if defined(UTRACY_DEBUG)
-	char ip[INET_ADDRSTRLEN];
-	if(NULL == inet_ntop(AF_INET, &addr->sin_addr, ip, sizeof(ip))) {
-		LOG_DEBUG_ERROR;
-		freeaddrinfo(result);
-		return -1;
-	}
-
-	LOG_INFO("listening on %s:%hu\n", ip, ntohs(addr->sin_port));
-#endif
-
-	freeaddrinfo(result);
-
-	return 0;
-}
-
-UTRACY_INTERNAL
-int utracy_client_accept(void) {
-	struct sockaddr_in client;
-
-	socklen_t len = sizeof(client);
-	if(0 > (utracy.sock.client = accept(utracy.sock.server, (struct sockaddr *) &client, &len))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	char ip[INET_ADDRSTRLEN];
-	if(NULL == inet_ntop(AF_INET, &client.sin_addr, ip, sizeof(ip))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	LOG_INFO("received connection: %s\n", ip);
-	utracy.sock.connected = 1;
-
-	return 0;
-}
-
-UTRACY_INTERNAL
-int utracy_client_recv(void *const buf, int unsigned len) {
+#if 0
+static int utracy_write(void const *const buf, size_t size) {
+	DWORD written;
 	size_t offset = 0;
-
-	while(offset < len) {
-		int received = recv(utracy.sock.client, (char *) buf + offset, len - offset, 0);
-
-		if(0 >= received) {
+	while(offset < size) {
+		if(FALSE == WriteFile(utracy.stream, (char *const) buf + offset, size - offset, &written, NULL)) {
 			LOG_DEBUG_ERROR;
+			return -1;
+		}
 
-#if defined(UTRACY_LINUX)
-			if(EINTR == errno) {
-				continue;
-			}
+		if(0 == written) {
+			LOG_DEBUG_ERROR;
+			return -1;
+		}
+
+		offset += written;
+	}
+
+	return 0;
+}
+#else
+static int utracy_write(void const *const buf, size_t size) {
+	fwrite(buf, 1, size, utracy.fstream);
+	return 0;
+}
 #endif
-
-			return -1;
-		}
-
-		offset += received;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL
-int utracy_client_send(void *const buf, int unsigned len) {
-	size_t offset = 0;
-
-	while(offset < len) {
-		int sent = send(utracy.sock.client, (char *) buf + offset, len - offset, 0);
-
-		if(0 >= sent) {
-			LOG_DEBUG_ERROR;
-
-#if defined(UTRACY_LINUX)
-			if(EINTR == errno) {
-				continue;
-			}
-#endif
-
-			return -1;
-		}
-
-		offset += sent;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL
-int utracy_commit(void) {
-	if(0 < utracy.data.raw_buf_head - utracy.data.raw_buf_tail) {
-		int unsigned pending_len;
-		pending_len = utracy.data.raw_buf_head - utracy.data.raw_buf_tail;
-
-		do {
-			int unsigned raw_frame_len = min(pending_len, UTRACY_MAX_FRAME_SIZE);
-
-			/* write compressed buf */
-			int unsigned compressed_len = LZ4_compress_fast_continue(
-				&utracy.data.stream,
-				/* src */
-				utracy.data.raw_buf + utracy.data.raw_buf_tail,
-				/* dst */
-				utracy.data.frame_buf + sizeof(int),
-				/* src len */
-				raw_frame_len,
-				/* dst max len */
-				LZ4_COMPRESSBOUND(UTRACY_MAX_FRAME_SIZE),
-				1
-			);
-
-			/* write compressed buf len */
-			(void) UTRACY_MEMCPY(utracy.data.frame_buf + 0, &compressed_len, sizeof(compressed_len));
-
-			/* transmit frame */
-			if(0 != utracy_client_send(utracy.data.frame_buf, compressed_len + sizeof(compressed_len))) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-
-			/* advance tail */
-			utracy.data.raw_buf_tail += raw_frame_len;
-			pending_len = utracy.data.raw_buf_head - utracy.data.raw_buf_tail;
-		} while(0 < pending_len);
-
-		/* previous 64kb of uncompressed data must remain unclobbered at the
-		   same memory address! */
-		if(utracy.data.raw_buf_head >= UTRACY_MAX_FRAME_SIZE * 2) {
-			utracy.data.raw_buf_head = 0;
-			utracy.data.raw_buf_tail = 0;
-		}
-
-		utracy.data.prev_commit = utracy_tsc();
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_write_packet(void const *const buf, int unsigned len) {
-	int unsigned current_frame_size = utracy.data.raw_buf_head - utracy.data.raw_buf_tail;
-
-	if(current_frame_size + len > UTRACY_MAX_FRAME_SIZE) {
-		if(0 != utracy_commit()) {
-			LOG_DEBUG_ERROR;
-			return -1;
-		}
-	}
-
-	if(len > sizeof(utracy.data.raw_buf) - utracy.data.raw_buf_head) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	(void) UTRACY_MEMCPY(utracy.data.raw_buf + utracy.data.raw_buf_head, buf, len);
-	utracy.data.raw_buf_head += len;
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_write_server_context(int unsigned tid) {
-#pragma pack(push, 1)
-	struct network_thread_context {
-		char unsigned type;
-		int unsigned tid;
-	};
-
-	_Static_assert(5 == sizeof(struct network_thread_context), "incorrect size");
-#pragma pack(pop)
-
-	struct network_thread_context msg = {
-		.type = UTRACY_EVT_THREADCONTEXT,
-		.tid = tid
-	};
-
-	if(0 != utracy_write_packet(&msg, sizeof(msg))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_write_zone_begin(struct event evt) {
-#pragma pack(push, 1)
-	struct network_zone_begin {
-		char unsigned type;
-		long long timestamp;
-		long long unsigned srcloc;
-	};
-	_Static_assert(17 == sizeof(struct network_zone_begin), "incorrect size");
-#pragma pack(pop)
-
-	long long timestamp = evt.zone_begin.timestamp - utracy.data.cur_thread.timestamp;
-	utracy.data.cur_thread.timestamp = evt.zone_begin.timestamp;
-
-	struct network_zone_begin msg = {
-		.type = UTRACY_EVT_ZONEBEGIN,
-		.timestamp = timestamp,
-		.srcloc = (uintptr_t) evt.zone_begin.srcloc
-	};
-
-	if(0 != utracy_write_packet(&msg, sizeof(msg))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_write_zone_end(struct event evt) {
-#pragma pack(push, 1)
-	struct network_zone_end {
-		char unsigned type;
-		long long timestamp;
-	};
-	_Static_assert(9 == sizeof(struct network_zone_end), "incorrect size");
-#pragma pack(pop)
-
-	long long timestamp = evt.zone_end.timestamp - utracy.data.cur_thread.timestamp;
-	utracy.data.cur_thread.timestamp = evt.zone_end.timestamp;
-
-	struct network_zone_end msg = {
-		.type = UTRACY_EVT_ZONEEND,
-		.timestamp = timestamp
-	};
-
-	if(0 != utracy_write_packet(&msg, sizeof(msg))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_write_zone_color(struct event evt) {
-#pragma pack(push, 1)
-	struct network_zone_color {
-		char unsigned type;
-		char unsigned r;
-		char unsigned g;
-		char unsigned b;
-	};
-	_Static_assert(4 == sizeof(struct network_zone_color), "incorrect size");
-#pragma pack(pop)
-
-	struct network_zone_color msg = {
-		.type = UTRACY_EVT_ZONECOLOR,
-		.r = (evt.zone_color.color >> 0) & 0xFF,
-		.g = (evt.zone_color.color >> 8) & 0xFF,
-		.b = (evt.zone_color.color >> 16) & 0xFF
-	};
-
-	if(0 != utracy_write_packet(&msg, sizeof(msg))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_write_frame_mark(struct event evt) {
-#pragma pack(push, 1)
-	struct network_frame_mark {
-		char unsigned type;
-		long long timestamp;
-		long long unsigned name;
-	};
-	_Static_assert(17 == sizeof(struct network_frame_mark), "incorrect size");
-#pragma pack(pop)
-
-	struct network_frame_mark msg = {
-		.type = UTRACY_EVT_FRAMEMARKMSG,
-		.timestamp = evt.frame_mark.timestamp,
-		.name = (uintptr_t) evt.frame_mark.name
-	};
-
-	if(0 != utracy_write_packet(&msg, sizeof(msg))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_write_srcloc(struct utracy_source_location const *const srcloc) {
-#pragma pack(push, 1)
-	struct network_srcloc {
-		char unsigned type;
-		long long unsigned name;
-		long long unsigned function;
-		long long unsigned file;
-		int unsigned line;
-		char unsigned r;
-		char unsigned g;
-		char unsigned b;
-	};
-	_Static_assert(32 == sizeof(struct network_srcloc), "incorrect size");
-#pragma pack(pop)
-
-	struct network_srcloc msg = {
-		.type = UTRACY_RESPONSE_SOURCELOCATION,
-		.name = (uintptr_t) srcloc->name,
-		.function = (uintptr_t) srcloc->function,
-		.file = (uintptr_t) srcloc->file,
-		.line = srcloc->line,
-		.r = (srcloc->color >> 0) & 0xFF,
-		.g = (srcloc->color >> 8) & 0xFF,
-		.b = (srcloc->color >> 16) & 0xFF
-	};
-
-	if(0 != utracy_write_packet(&msg, sizeof(msg))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_write_stringdata(char unsigned type, char const *const str, long long unsigned ptr) {
-#pragma pack(push, 1)
-	struct network_query_stringdata {
-		char unsigned type;
-		long long unsigned ptr;
-		short unsigned len;
-		char str[];
-	};
-	_Static_assert(11 == sizeof(struct network_query_stringdata), "incorrect size");
-#pragma pack(pop)
-
-	short unsigned len = (short unsigned) strlen(str);
-	size_t size = sizeof(struct network_query_stringdata) + len;
-
-	static char buf[sizeof(struct network_query_stringdata) + 65536];
-	struct network_query_stringdata *msg = (struct network_query_stringdata *) buf;
-
-	msg->type = type;
-	msg->ptr = ptr;
-	msg->len = len;
-	(void) UTRACY_MEMCPY(msg->str, str, len);
-
-	if(0 != utracy_write_packet(msg, size)) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL
-int utracy_consume_request(void) {
-#pragma pack(push, 1)
-	struct network_recv_request {
-		char unsigned type;
-		long long unsigned ptr;
-		int unsigned extra;
-	};
-	_Static_assert(13 == sizeof(struct network_recv_request), "incorrect size");
-#pragma pack(pop)
-
-	struct network_recv_request req;
-	if(0 != utracy_client_recv(&req, sizeof(req))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	switch(req.type) {
-		case UTRACY_QUERY_STRING:
-			if(0 != utracy_write_stringdata(UTRACY_RESPONSE_STRINGDATA, (char *) (uintptr_t) req.ptr, req.ptr)) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_PLOTNAME:
-			if(0 != utracy_write_stringdata(UTRACY_RESPONSE_PLOTNAME, (char *) (uintptr_t) req.ptr, req.ptr)) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_THREADSTRING:
-			if(0 != utracy_write_stringdata(UTRACY_RESPONSE_THREADNAME, "main", req.ptr)) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_SOURCELOCATION:;
-			if(0 != utracy_write_srcloc((void *) (uintptr_t) req.ptr)) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_SYMBOLCODE:;
-			char unsigned symbol_type = UTRACY_RESPONSE_ACKSYMBOLCODENOTAVAILABLE;
-			if(0 != utracy_write_packet(&symbol_type, sizeof(symbol_type))) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_SOURCECODE:;
-			char unsigned sourcecode_type = UTRACY_RESPONSE_ACKSOURCECODENOTAVAILABLE;
-			if(0 != utracy_write_packet(&sourcecode_type, sizeof(sourcecode_type))) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_DATATRANSFER:
-		case UTRACY_QUERY_DATATRANSFERPART:;
-			char unsigned datatransfer_type = UTRACY_RESPONSE_ACKSERVERQUERYNOOP;
-			if(0 != utracy_write_packet(&datatransfer_type, sizeof(datatransfer_type))) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_TERMINATE:
-		case UTRACY_QUERY_CALLSTACKFRAME:
-		case UTRACY_QUERY_FRAMENAME:
-		case UTRACY_QUERY_DISCONNECT:
-		case UTRACY_QUERY_EXTERNALNAME:
-		case UTRACY_QUERY_PARAMETER:
-		case UTRACY_QUERY_SYMBOL:
-		case UTRACY_QUERY_CODELOCATION:
-		case UTRACY_QUERY_FIBERNAME:
-		default:
-			/* not implemented */
-			break;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL UTRACY_INLINE
-int utracy_switch_thread_context(int unsigned tid) {
-	if(tid != utracy.data.cur_thread.tid) {
-		utracy.data.cur_thread.tid = tid;
-		utracy.data.cur_thread.timestamp = 0ll;
-
-		return utracy_write_server_context(tid);
-	}
-
-	return 0;
-}
-
-static int unsigned hacky_proc_stack;
-
-UTRACY_INTERNAL
-int utracy_consume_queue(void) {
-	struct event evt;
-
-	if(1 != utracy.sock.connected) {
-		while(0 == event_queue_pop(&evt));
-		return 0;
-	}
-
-	while(0 == event_queue_pop(&evt)) {
-		switch(evt.type) {
-			case UTRACY_EVT_ZONEBEGIN:
-				if(0 != utracy_switch_thread_context(evt.zone_begin.tid)) {
-					LOG_DEBUG_ERROR;
-					return -1;
-				}
-
-				if(0 != utracy_write_zone_begin(evt)) {
-					LOG_DEBUG_ERROR;
-					return -1;
-				}
-
-				hacky_proc_stack++;
-				break;
-
-			case UTRACY_EVT_ZONEEND:
-				if(0 < hacky_proc_stack) {
-					hacky_proc_stack--;
-				} else {
-					break;
-				}
-
-				if(0 != utracy_switch_thread_context(evt.zone_end.tid)) {
-					LOG_DEBUG_ERROR;
-					return -1;
-				}
-
-				if(0 != utracy_write_zone_end(evt)) {
-					LOG_DEBUG_ERROR;
-					return -1;
-				}
-				break;
-
-			case UTRACY_EVT_ZONECOLOR:
-				if(!hacky_proc_stack) {
-					break;
-				}
-
-				if(0 != utracy_switch_thread_context(evt.zone_color.tid)) {
-					LOG_DEBUG_ERROR;
-					return -1;
-				}
-
-				if(0 != utracy_write_zone_color(evt)) {
-					LOG_DEBUG_ERROR;
-					return -1;
-				}
-				break;
-
-			case UTRACY_EVT_FRAMEMARKMSG:
-				if(0 != utracy_write_frame_mark(evt)) {
-					LOG_DEBUG_ERROR;
-					return -1;
-				}
-				break;
-
-			default:
-				LOG_DEBUG_ERROR;
-				return -1;
-		}
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL
-int utracy_server_pump(void) {
-	if(0 != utracy_consume_queue()) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	if(1 != utracy.sock.connected) {
-		return -2;
-	}
-
-#if defined(UTRACY_WINDOWS)
-	WSAPOLLFD descriptor = {
-		.fd = utracy.sock.client,
-		.events = POLLRDNORM,
-		.revents = 0
-	};
-
-	int polled = WSAPoll(&descriptor, 1, 1);
-
-#elif defined(UTRACY_LINUX)
-	struct pollfd descriptor = {
-		.fd = utracy.sock.client,
-		.events = POLLRDNORM,
-		.revents = 0
-	};
-
-	int polled = poll(&descriptor, 1, 1);
-
-#endif
-
-	if(0 < polled) {
-		if(0 != utracy_consume_request()) {
-			LOG_DEBUG_ERROR;
-			return -1;
-		}
-
-	} else if(-1 == polled) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	long long now = utracy_tsc();
-	if(now - utracy.data.prev_commit >= UTRACY_LATENCY) {
-		if(0 != utracy_commit()) {
-			LOG_DEBUG_ERROR;
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL
-int utracy_client_negotiate(void) {
-	char handshake[8];
-	if(0 != utracy_client_recv(handshake, sizeof(handshake))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	if(0 != UTRACY_MEMCMP(handshake, "TracyPrf", 8)) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	int unsigned protocol;
-	if(0 != utracy_client_recv(&protocol, sizeof(protocol))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	int unsigned supported_protocols[] = {
-		56, /* 0.8.1 */
-		57, /* 0.8.2 */
-		0 /* sentinel - do not remove */
-	};
-
-	int compatible = 0;
-	for(int unsigned *p=supported_protocols; *p; p++) {
-		if(*p == protocol) {
-			compatible = 1;
-			break;
-		}
-	}
-
-	if(0 == compatible) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	char unsigned response = 1;
-	if(0 != utracy_client_send(&response, sizeof(response))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-#pragma pack(push, 1)
-	struct network_welcome {
-		double multiplier;
-		long long init_begin;
-		long long init_end;
-		long long delay;
-		long long resolution;
-		long long epoch;
-		long long exec_time;
-		long long pid;
-		long long sampling_period;
-		char unsigned flags;
-		char unsigned cpu_arch;
-		char cpu_manufacturer[12];
-		int unsigned cpu_id;
-		char program_name[64];
-		char host_info[1024];
-	};
-	_Static_assert(1178 == sizeof(struct network_welcome), "incorrect size");
-#pragma pack(pop)
-
-	struct network_welcome welcome = {
-		.multiplier = utracy.info.multiplier,
-		.init_begin = utracy.info.init_begin,
-		.init_end = utracy.info.init_end,
-		.delay = utracy.info.delay,
-		.resolution = utracy.info.resolution,
-		.epoch = utracy.info.epoch,
-		.exec_time = utracy.info.exec_time,
-		.pid = 0,
-		.sampling_period = 0,
-		.flags = 1,
-		.cpu_arch = 0,
-		.cpu_manufacturer = "???",
-		.cpu_id = 0,
-		.program_name = "DREAMDAEMON",
-		.host_info = "???"
-	};
-
-	if(0 != utracy_client_send(&welcome, sizeof(welcome))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-#pragma pack(push, 1)
-	struct network_ondemand {
-		long long unsigned frames;
-		long long unsigned timestamp;
-	};
-	_Static_assert(16 == sizeof(struct network_ondemand), "incorrect size");
-#pragma pack(pop)
-
-	struct network_ondemand ondemand = {
-		.frames = 0ull,
-		.timestamp = utracy_tsc()
-	};
-
-	if(0 != utracy_client_send(&ondemand, sizeof(ondemand))) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-	return 0;
-}
-
-UTRACY_INTERNAL
-int utracy_client_disconnect(void) {
-	utracy.sock.connected = 0;
-
-#if defined(UTRACY_WINDOWS)
-	if(0 != shutdown(utracy.sock.client, SD_SEND)) {
-		LOG_DEBUG_ERROR;
-	}
-
-	if(0 != closesocket(utracy.sock.client)) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-#elif defined(UTRACY_LINUX)
-	if(0 != close(utracy.sock.client)) {
-		LOG_DEBUG_ERROR;
-		return -1;
-	}
-
-#endif
-
-	return 0;
-}
 
 UTRACY_INTERNAL
 #if defined(UTRACY_WINDOWS)
@@ -2513,52 +753,101 @@ void *utracy_server_thread_start(void *user) {
 #endif
 	(void) user;
 
-	do {
-		if(0 == utracy.sock.connected) {
-#if defined(UTRACY_WINDOWS)
-			WSAPOLLFD descriptor = {
-				.fd = utracy.sock.server,
-				.events = POLLRDNORM,
-				.revents = 0
-			};
+	{
+		struct {
+			long long unsigned signature;
+			int unsigned version;
+			double multiplier;
+			long long init_begin;
+			long long init_end;
+			long long delay;
+			long long resolution;
+			long long epoch;
+			long long exec_time;
+			long long pid;
+			long long sampling_period;
+			char unsigned flags;
+			char unsigned cpu_arch;
+			char cpu_manufacturer[12];
+			int unsigned cpu_id;
+			char program_name[64];
+			char host_info[1024];
+		} header = {0};
 
-			int polled = WSAPoll(&descriptor, 1, 1);
+		header.signature = 0x6D64796361727475llu;
+		header.version = 2;
+		header.multiplier = utracy.info.multiplier;
+		header.init_begin = utracy.info.init_begin;
+		header.init_end = utracy.info.init_end;
+		header.delay = utracy.info.delay;
+		header.resolution = utracy.info.resolution;
+		header.epoch = utracy.info.epoch;
+		header.exec_time = utracy.info.exec_time;
+		header.pid = 0;
+		header.sampling_period = 0;
+		header.flags = 0;
+		header.cpu_arch = 0;
+		(void) memcpy(header.cpu_manufacturer, "???", 3);
+		header.cpu_id = 0;
+		(void) memcpy(header.program_name, "dreamdaemon.exe", 15);
+		(void) memcpy(header.host_info, "???", 3);
 
-#elif defined(UTRACY_LINUX)
-			struct pollfd descriptor = {
-				.fd = utracy.sock.server,
-				.events = POLLRDNORM,
-				.revents = 0
-			};
+		(void) utracy_write(&header, sizeof(header));
+	}
 
-			int polled = poll(&descriptor, 1, 1);
+	int unsigned srclocs_len = sizeof(srclocs) / sizeof(*srclocs);
+	(void) utracy_write(&srclocs_len, sizeof(srclocs_len));
+	for(int unsigned i=0; i<srclocs_len; i++) {
+		struct utracy_source_location srcloc = srclocs[i];
 
-#endif
-
-			if(0 < polled) {
-				if(0 != utracy_client_accept()) {
-					LOG_DEBUG_ERROR;
-					continue;
-				}
-
-				(void) UTRACY_MEMSET(&utracy.data, 0, sizeof(utracy.data));
-				LZ4_resetStream_fast(&utracy.data.stream);
-				hacky_proc_stack = 0;
-
-				if(0 != utracy_client_negotiate()) {
-					LOG_DEBUG_ERROR;
-					(void) utracy_client_disconnect();
-					continue;
-				}
-			}
+		if(NULL != srcloc.name) {
+			int unsigned name_len = strlen(srcloc.name);
+			(void) utracy_write(&name_len, sizeof(name_len));
+			(void) utracy_write(srcloc.name, name_len);
+		} else {
+			int unsigned name_len = 0;
+			(void) utracy_write(&name_len, sizeof(name_len));
 		}
 
-		while(0 == utracy_server_pump());
-
-		if(1 == utracy.sock.connected) {
-			(void) utracy_client_disconnect();
+		if(NULL != srcloc.function) {
+			int unsigned function_len = strlen(srcloc.function);
+			(void) utracy_write(&function_len, sizeof(function_len));
+			(void) utracy_write(srcloc.function, function_len);
+		} else {
+			int unsigned function_len = 0;
+			(void) utracy_write(&function_len, sizeof(function_len));
 		}
-	} while(1);
+
+		if(NULL != srcloc.file) {
+			int unsigned file_len = strlen(srcloc.file);
+			(void) utracy_write(&file_len, sizeof(file_len));
+			(void) utracy_write(srcloc.file, file_len);
+		} else {
+			int unsigned file_len = 0;
+			(void) utracy_write(&file_len, sizeof(file_len));
+		}
+
+		(void) utracy_write(&srcloc.line, sizeof(srcloc.line));
+		(void) utracy_write(&srcloc.color, sizeof(srcloc.color));
+	}
+
+	int quitting = 0;
+	while(!quitting) {
+		struct event evt;
+		while(0 == event_queue_pop(&evt)) {
+			(void) utracy_write(&evt, sizeof(evt));
+		}
+
+		switch(WaitForSingleObject(utracy.quit, 1)) {
+			default:
+				LOG_DEBUG_ERROR;
+			case WAIT_OBJECT_0:
+				quitting = 1;
+				break;
+			case WAIT_TIMEOUT:
+				break;
+		}
+	}
 
 #if defined(UTRACY_WINDOWS)
 	ExitThread(0);
@@ -2570,8 +859,8 @@ void *utracy_server_thread_start(void *user) {
 /* byond hooks */
 UTRACY_INTERNAL
 struct object UTRACY_WINDOWS_CDECL UTRACY_LINUX_REGPARM(3) exec_proc(struct proc *proc) {
-	if(likely(proc->procdef < 0x100000)) {
-		utracy_emit_zone_begin(srclocs + proc->procdef);
+	if(likely(proc->procdef < 0x10000)) {
+		utracy_emit_zone_begin(proc->procdef);
 
 		/* procs with pre-existing contexts are resuming from sleep */
 		if(unlikely(proc->ctx != NULL)) {
@@ -2590,18 +879,10 @@ struct object UTRACY_WINDOWS_CDECL UTRACY_LINUX_REGPARM(3) exec_proc(struct proc
 
 UTRACY_INTERNAL
 int UTRACY_WINDOWS_STDCALL UTRACY_LINUX_CDECL server_tick(void) {
-	static struct utracy_source_location const srcloc = {
-		.name = NULL,
-		.function = "ServerTick",
-		.file = __FILE__,
-		.line = __LINE__,
-		.color = 0x44AF44
-	};
-
 	/* server tick is the end of a frame and the beginning of the next frame */
 	utracy_emit_frame_mark(NULL);
 
-	utracy_emit_zone_begin(&srcloc);
+	utracy_emit_zone_begin(0x10000);
 
 	int interval = byond.orig_server_tick();
 
@@ -2612,15 +893,7 @@ int UTRACY_WINDOWS_STDCALL UTRACY_LINUX_CDECL server_tick(void) {
 
 UTRACY_INTERNAL
 void UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL send_maps(void) {
-	static struct utracy_source_location const srcloc = {
-		.name = NULL,
-		.function = "SendMaps",
-		.file = __FILE__,
-		.line = __LINE__,
-		.color = 0x44AF44
-	};
-
-	utracy_emit_zone_begin(&srcloc);
+	utracy_emit_zone_begin(0x10001);
 
 	byond.orig_send_maps();
 
@@ -2719,11 +992,10 @@ void *hook(char *const restrict dst, char *const restrict src, char unsigned siz
 }
 
 #if defined(UTRACY_WINDOWS)
-#	define BYOND_MAX_BUILD 1592
-#	define BYOND_MIN_BUILD 1543
-#	define BYOND_VERSION_ADJUSTED(a) ((a) - BYOND_MIN_BUILD)
-
-static int unsigned const byond_offsets[][7] = {
+#define BYOND_MAX_BUILD 1596
+#define BYOND_MIN_BUILD 1543
+#define BYOND_VERSION_ADJUSTED(a) ((a) - BYOND_MIN_BUILD)
+int unsigned byond_offsets[][7] = {
 	/*                                strings     miscs       procdefs    exec_proc   server_tick send_maps   prologue */
 	[BYOND_VERSION_ADJUSTED(1543)] = {0x0035FC58, 0x0035FC68, 0x0035FC78, 0x001003B0, 0x001C7D20, 0x00187C80, 0x00050B06},
 	[BYOND_VERSION_ADJUSTED(1544)] = {0x00360C58, 0x00360C68, 0x00360C78, 0x00100A10, 0x001C8420, 0x00188220, 0x00050B06},
@@ -2775,6 +1047,10 @@ static int unsigned const byond_offsets[][7] = {
 	[BYOND_VERSION_ADJUSTED(1590)] = {0x00396974, 0x00396984, 0x00396994, 0x00118180, 0x001EA800, 0x001A6A80, 0x00050606},
 	[BYOND_VERSION_ADJUSTED(1591)] = {0x00396974, 0x00396984, 0x00396994, 0x001175E0, 0x001E9F00, 0x001A5F00, 0x00050606},
 	[BYOND_VERSION_ADJUSTED(1592)] = {0x00396974, 0x00396984, 0x00396994, 0x00117890, 0x001EA900, 0x001A6380, 0x00050606},
+	[BYOND_VERSION_ADJUSTED(1593)] = {0x00396974, 0x00396984, 0x00396994, 0x00118090, 0x001EAB30, 0x001A6920, 0x00050606},
+	[BYOND_VERSION_ADJUSTED(1594)] = {0x00397B6C, 0x00397B7C, 0x00397B8C, 0x00118590, 0x001EBBB0, 0x001A8140, 0x00050606},
+	[BYOND_VERSION_ADJUSTED(1595)] = {0x0039AB58, 0x0039AB68, 0x0039AB78, 0x0011A810, 0x001EED90, 0x001AB310, 0x00050606},
+	[BYOND_VERSION_ADJUSTED(1596)] = {0x0039AB58, 0x0039AB68, 0x0039AB78, 0x0011A090, 0x001EE950, 0x001AAC20, 0x00050606},
 };
 
 #elif defined(UTRACY_LINUX)
@@ -2888,6 +1164,22 @@ void build_srclocs(void) {
 		};
 	}
 
+	srclocs[0x10000] = (struct utracy_source_location) {
+		.name = NULL,
+		.function = "ServerTick",
+		.file = __FILE__,
+		.line = __LINE__,
+		.color = 0x44AF44
+	};
+
+	srclocs[0x10001] = (struct utracy_source_location) {
+		.name = NULL,
+		.function = "SendMaps",
+		.file = __FILE__,
+		.line = __LINE__,
+		.color = 0x44AF44
+	};
+
 #undef byond_get_string
 #undef byond_get_misc
 #undef byond_get_procdef
@@ -2901,6 +1193,8 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 	(void) argc;
 	(void) argv;
 
+	printf("hello world?\n");
+
 	if(0 != initialized) {
 		return "already initialized";
 	}
@@ -2913,11 +1207,6 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 	if(0 != event_queue_init()) {
 		LOG_DEBUG_ERROR;
 		return "event_queue_init failed";
-	}
-
-	if(NULL == LZ4_initStream(&utracy.data.stream, sizeof(utracy.data.stream))) {
-		LOG_DEBUG_ERROR;
-		return "LZ4_initStream failed";
 	}
 
 	typedef int (*PFN_GETBYONDBUILD)(void);
@@ -3027,8 +1316,21 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 	linux_main_tid = syscall(__NR_gettid);
 #endif
 
-	if(0 != utracy_server_init()) {
-		return "failed to init server";
+	utracy.quit = CreateEventA(NULL, TRUE, FALSE, NULL);
+	if(NULL == utracy.quit) {
+		LOG_DEBUG_ERROR;
+		return "CreateEventA failed";
+	}
+
+	(void) CreateDirectoryW(L".\\data", NULL);
+	(void) CreateDirectoryW(L".\\data\\profiler", NULL);
+
+	char ffilename[MAX_PATH];
+	snprintf(ffilename, MAX_PATH, ".\\data\\profiler\\%llu.utracy", utracy_tsc());
+	utracy.fstream = fopen(ffilename, "wb");
+	if(NULL == utracy.fstream) {
+		LOG_DEBUG_ERROR;
+		return "fopen failed";
 	}
 
 	utracy.info.resolution = calibrate_resolution();
@@ -3039,8 +1341,9 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 	utracy.info.init_end = utracy_tsc();
 
 #if defined(UTRACY_WINDOWS)
-	if(NULL == CreateThread(NULL, 0, utracy_server_thread_start, NULL, 0, NULL)) {
+	if(NULL == (utracy.thread = CreateThread(NULL, 0, utracy_server_thread_start, NULL, 0, NULL))) {
 		LOG_DEBUG_ERROR;
+		fclose(utracy.fstream);
 		return "CreateThread failed";
 	}
 
@@ -3063,6 +1366,21 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL destroy(int argc, char **argv) {
 	(void) argv;
 
 	/* not yet implemented */
+	if(1 != initialized) {
+		return "not initialized";
+	}
+
+	(void) SetEvent(utracy.quit);
+
+	switch(WaitForSingleObject(utracy.thread, INFINITE)) {
+		case WAIT_OBJECT_0:
+			break;
+		default:
+			LOG_DEBUG_ERROR;
+	}
+
+	fclose(utracy.fstream);
+	initialized = 0;
 
 	return "0";
 }
