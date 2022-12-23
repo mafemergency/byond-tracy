@@ -1621,7 +1621,7 @@ struct utracy_source_location {
 	int unsigned color;
 };
 
-static struct utracy_source_location srclocs[0x10000];
+static struct utracy_source_location srclocs[0x14000];
 
 UTRACY_INTERNAL UTRACY_INLINE
 void utracy_emit_zone_begin(struct utracy_source_location const *const srcloc) {
@@ -2570,7 +2570,7 @@ void *utracy_server_thread_start(void *user) {
 /* byond hooks */
 UTRACY_INTERNAL
 struct object UTRACY_WINDOWS_CDECL UTRACY_LINUX_REGPARM(3) exec_proc(struct proc *proc) {
-	if(likely(proc->procdef < 0x100000)) {
+	if(likely(proc->procdef < 0x14000)) {
 		utracy_emit_zone_begin(srclocs + proc->procdef);
 
 		/* procs with pre-existing contexts are resuming from sleep */
@@ -2843,7 +2843,7 @@ void build_srclocs(void) {
 #define byond_get_misc(id) (id < *byond.miscs_len ? *(*byond.miscs + id) : NULL)
 #define byond_get_procdef(id) (id < *byond.procdefs_len ? *byond.procdefs + id : NULL)
 
-	for(int unsigned i=0; i<0x10000; i++) {
+	for(int unsigned i=0; i<0x14000; i++) {
 		char const *name = NULL;
 		char const *function = "<?>";
 		char const *file = "<?.dm>";
