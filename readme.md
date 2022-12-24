@@ -19,7 +19,7 @@ byond-tracy glues together a byond server with the tracy profiler allowing you t
 
 ## usage
 simply call `init` from `prof.dll` to begin collecting profile data and connect using [tracy-server](https://github.com/wolfpld/tracy/releases) `Tracy.exe`
-```c
+```dm
 /proc/prof_init()
 	var/lib
 
