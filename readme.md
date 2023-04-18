@@ -21,7 +21,9 @@ byond-tracy glues together a byond server with the tracy profiler allowing you t
 `0.8.1` `0.8.2`
 
 ## usage
-simply call `init` from `prof.dll` to begin collecting profile data and connect using [tracy-server](https://github.com/wolfpld/tracy/releases) `Tracy.exe`
+simply call `init` in `prof.dll` to begin collecting profile data and connect using [tracy-server](https://github.com/wolfpld/tracy/releases) `Tracy.exe`
+
+Note that byond-tracy can only tell you about proc calls that start AFTER it's initialized. Here's a trick to get the highest possible coverage.
 ```dm
 /proc/prof_init()
 	var/lib
@@ -34,10 +36,23 @@ simply call `init` from `prof.dll` to begin collecting profile data and connect 
 	var/init = call_ext(lib, "init")()
 	if("0" != init) CRASH("[lib] init error: [init]")
 
-/world/New()
-	prof_init()
-	. = ..()
+/proc/FirstDMCodeToRun(tracy_initialized = FALSE)
+	if(!tracy_initialized)
+		prof_init()
+		FirstDMCodeToRun(TRUE)
+		return
+
+
+	...
 ```
+
+In the very last .dm file included in your .dme
+```
+/world/proc/GenesisInvoker()
+	var/static/_ = FirstDMCodeToRun()
+```
+
+This manipulates BYOND init order so that the `FirstDMCodeToRun()` proc is the very first line of DM code executed in your world.
 
 ## env vars
 set these env vars before launching dreamdaemon to control which node and service to bind
