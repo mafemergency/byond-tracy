@@ -2533,11 +2533,11 @@ int utracy_client_disconnect(void) {
 
 UTRACY_INTERNAL
 #if defined(UTRACY_WINDOWS)
-DWORD WINAPI utracy_server_thread_start(PVOID user) {
+DWORD WINAPI utracy_server_thread_start(HANDLE profilerConnectedEventHandle) {
 #elif defined(UTRACY_LINUX)
 void* utracy_server_thread_start(void* user) {
+	(void)user; // TODO Linux startup blocking
 #endif
-	(void)user;
 
 	do {
 		if (0 == utracy.sock.connected) {
@@ -2576,6 +2576,12 @@ void* utracy_server_thread_start(void* user) {
 					(void)utracy_client_disconnect();
 					continue;
 				}
+
+#if defined(UTRACY_WINDOWS)
+				SetEvent(profilerConnectedEventHandle);
+#else
+				// TODO Linux startup blocking
+#endif
 			}
 		}
 
@@ -2585,6 +2591,12 @@ void* utracy_server_thread_start(void* user) {
 			(void)utracy_client_disconnect();
 		}
 	} while (1);
+
+#if defined(UTRACY_WINDOWS)
+	CloseHandle(profilerConnectedEventHandle);
+#else
+	// TODO Linux startup blocking
+#endif
 
 #if defined(UTRACY_WINDOWS)
 	ExitThread(0);
@@ -2947,6 +2959,11 @@ char* UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char** argv) {
 		return "already initialized";
 	}
 
+	int block_start = 0;
+	if (argc > 0 && strcmp(argv[0], "block") == 0) {
+		block_start = 1;
+	}
+
 	(void)UTRACY_MEMSET(&byond, 0, sizeof(byond));
 	(void)UTRACY_MEMSET(&utracy, 0, sizeof(utracy));
 
@@ -3081,16 +3098,44 @@ char* UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char** argv) {
 	utracy.info.init_end = utracy_tsc();
 
 #if defined(UTRACY_WINDOWS)
-	if (NULL == CreateThread(NULL, 0, utracy_server_thread_start, NULL, 0, NULL)) {
+	HANDLE profilerConnectedEvent = NULL;
+		
+	if (block_start != 0) {
+		profilerConnectedEvent = CreateEvent(
+			NULL,               // default security attributes
+			TRUE,               // manual-reset event
+			FALSE,              // initial state is nonsignaled
+			TEXT("ProfilerConnectedEvent"));  // object name
+
+		if (profilerConnectedEvent == NULL) {
+			return "failed to allocate event handle";
+		}
+	}
+
+	if (NULL == CreateThread(NULL, 0, utracy_server_thread_start, profilerConnectedEvent, 0, NULL)) {
 		LOG_DEBUG_ERROR;
 		return "CreateThread failed";
 	}
 
+	if (block_start != 0) {
+		WaitForSingleObject(
+			profilerConnectedEvent,
+			INFINITE);
+	}
+
 #elif defined(UTRACY_LINUX)
+	if (block_start != 0) {
+		// TODO Linux startup blocking
+	}
+
 	pthread_t thr;
 	if (0 != pthread_create(&thr, NULL, utracy_server_thread_start, NULL)) {
 		LOG_DEBUG_ERROR;
 		return "pthread_create failed";
+	}
+
+	if (block_start != 0) {
+		// TODO Linux startup blocking
 	}
 
 #endif

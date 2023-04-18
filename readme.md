@@ -31,7 +31,8 @@ simply call `init` from `prof.dll` to begin collecting profile data and connect 
 		if(UNIX) lib = "libprof.so"
 		else CRASH("unsupported platform")
 
-	var/init = call_ext(lib, "init")()
+	var/wait_for_profiler_attach = TRUE
+	var/init = wait_for_profiler_attach ? call_ext(lib, "init")() : call_ext(lib, "init")("block")
 	if("0" != init) CRASH("[lib] init error: [init]")
 
 /world/New()
