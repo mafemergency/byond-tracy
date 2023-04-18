@@ -2593,6 +2593,8 @@ void* utracy_server_thread_start(void* user) {
 #endif
 }
 
+static int in_byond_init = 0;
+
 /* byond hooks */
 UTRACY_INTERNAL
 struct object UTRACY_WINDOWS_CDECL UTRACY_LINUX_REGPARM(3) exec_proc(struct proc* proc) {
@@ -2607,6 +2609,11 @@ struct object UTRACY_WINDOWS_CDECL UTRACY_LINUX_REGPARM(3) exec_proc(struct proc
 		struct object result = byond.orig_exec_proc(proc);
 
 		utracy_emit_zone_end();
+
+		if (in_byond_init != 0 && strcmp(srcloc->function, "/world/New") == 0) {
+			// end of BYOND init
+			utracy_emit_zone_end();
+		}
 
 		return result;
 	}
@@ -2623,6 +2630,13 @@ int UTRACY_WINDOWS_STDCALL UTRACY_LINUX_CDECL server_tick(void) {
 		.line = __LINE__,
 		.color = 0x44AF44
 	};
+
+	if (in_byond_init != 0) {
+		// we were likely loaded after /world/New slept and erroneously put up the "BYOND Init" zone
+		// that's fine, just get rid of it now
+		utracy_emit_zone_end();
+		in_byond_init = 0;
+	}
 
 	/* server tick is the end of a frame and the beginning of the next frame */
 	utracy_emit_frame_mark(NULL);
@@ -3079,6 +3093,20 @@ char* UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char** argv) {
 	utracy.info.epoch = unix_timestamp();
 	utracy.info.exec_time = unix_timestamp();
 	utracy.info.init_end = utracy_tsc();
+
+	// Assume we are in and create the "BYOND init" zone. Popped when /world/New is first popped.
+	// This is we shouldn't be initialized before /world/New() sleeps or returns
+	static struct utracy_source_location const initloc = {
+		.name = NULL,
+		.function = "BYOND Init",
+		.file = __FILE__,
+		.line = __LINE__,
+		.color = 0x44AF44
+	};
+
+	utracy_emit_zone_begin(&initloc);
+
+	in_byond_init = 1;
 
 #if defined(UTRACY_WINDOWS)
 	if (NULL == CreateThread(NULL, 0, utracy_server_thread_start, NULL, 0, NULL)) {
