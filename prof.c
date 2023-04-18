@@ -2573,7 +2573,8 @@ static int in_byond_init = 0;
 UTRACY_INTERNAL
 struct object UTRACY_WINDOWS_CDECL UTRACY_LINUX_REGPARM(3) exec_proc(struct proc *proc) {
 	if(likely(proc->procdef < 0x14000)) {
-		utracy_emit_zone_begin(srclocs + proc->procdef);
+		struct utracy_source_location const *const srcloc = srclocs + proc->procdef;
+		utracy_emit_zone_begin(srcloc);
 
 		/* procs with pre-existing contexts are resuming from sleep */
 		if(unlikely(proc->ctx != NULL)) {
