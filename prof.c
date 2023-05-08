@@ -1248,12 +1248,6 @@ struct event_frame_mark {
 	long long timestamp;
 };
 
-struct event_plot {
-	void *name;
-	float f;
-	long long timestamp;
-};
-
 struct event {
 	char unsigned type;
 	union {
@@ -1261,7 +1255,6 @@ struct event {
 		struct event_zone_end zone_end;
 		struct event_zone_color zone_color;
 		struct event_frame_mark frame_mark;
-		struct event_plot plot;
 	};
 };
 
@@ -1291,6 +1284,33 @@ static struct {
 		long long epoch;
 		long long exec_time;
 	} info;
+
+	struct {
+		int unsigned version;
+
+		char unsigned zone_begin;
+		char unsigned zone_end;
+		char unsigned zone_color;
+		char unsigned thread_context;
+		char unsigned framemark;
+
+		char unsigned response_source_location;
+		char unsigned response_server_query_noop;
+		char unsigned response_source_code_unavail;
+		char unsigned response_symbol_code_unavail;
+		char unsigned response_string_data;
+		char unsigned response_thread_name;
+
+		char unsigned query_terminate;
+		char unsigned query_string;
+		char unsigned query_thread_string;
+		char unsigned query_source_location;
+		char unsigned query_disconnect;
+		char unsigned query_symbol_code;
+		char unsigned query_source_code;
+		char unsigned query_data_transfer;
+		char unsigned query_data_transfer_part;
+	} protocol;
 
 	struct {
 		int connected;
@@ -1580,38 +1600,16 @@ long long unix_timestamp(void) {
 #endif
 }
 
+#define UTRACY_PROTOCOL_0_8_1 (56)
+#define UTRACY_PROTOCOL_0_8_2 (57)
+#define UTRACY_PROTOCOL_0_9_0 (63)
+
 #define UTRACY_EVT_ZONEBEGIN (15)
 #define UTRACY_EVT_ZONEEND (17)
 #define UTRACY_EVT_PLOTDATA (43)
 #define UTRACY_EVT_THREADCONTEXT (57)
 #define UTRACY_EVT_ZONECOLOR (62)
 #define UTRACY_EVT_FRAMEMARKMSG (64)
-
-#define UTRACY_RESPONSE_SOURCELOCATION (67)
-#define UTRACY_RESPONSE_ACKSERVERQUERYNOOP (87)
-#define UTRACY_RESPONSE_ACKSOURCECODENOTAVAILABLE (88)
-#define UTRACY_RESPONSE_ACKSYMBOLCODENOTAVAILABLE (89)
-#define UTRACY_RESPONSE_STRINGDATA (94)
-#define UTRACY_RESPONSE_THREADNAME (95)
-#define UTRACY_RESPONSE_PLOTNAME (96)
-
-#define UTRACY_QUERY_TERMINATE (0)
-#define UTRACY_QUERY_STRING (1)
-#define UTRACY_QUERY_THREADSTRING (2)
-#define UTRACY_QUERY_SOURCELOCATION (3)
-#define UTRACY_QUERY_PLOTNAME (4)
-#define UTRACY_QUERY_FRAMENAME (5)
-#define UTRACY_QUERY_PARAMETER (6)
-#define UTRACY_QUERY_FIBERNAME (7)
-#define UTRACY_QUERY_DISCONNECT (8)
-#define UTRACY_QUERY_CALLSTACKFRAME (9)
-#define UTRACY_QUERY_EXTERNALNAME (10)
-#define UTRACY_QUERY_SYMBOL (11)
-#define UTRACY_QUERY_SYMBOLCODE (12)
-#define UTRACY_QUERY_CODELOCATION (13)
-#define UTRACY_QUERY_SOURCECODE (14)
-#define UTRACY_QUERY_DATATRANSFER (15)
-#define UTRACY_QUERY_DATATRANSFERPART (16)
 
 struct utracy_source_location {
 	char const *name;
@@ -1802,6 +1800,70 @@ retry:
 }
 
 UTRACY_INTERNAL
+int utracy_protocol_init(int unsigned version) {
+	utracy.protocol.version = version;
+
+	switch(version) {
+		case UTRACY_PROTOCOL_0_8_1:
+		case UTRACY_PROTOCOL_0_8_2:
+			utracy.protocol.zone_begin = 15;
+			utracy.protocol.zone_end = 17;
+			utracy.protocol.zone_color = 62;
+			utracy.protocol.thread_context = 57;
+			utracy.protocol.framemark = 64;
+
+			utracy.protocol.response_source_location = 67;
+			utracy.protocol.response_server_query_noop = 87;
+			utracy.protocol.response_source_code_unavail = 88;
+			utracy.protocol.response_symbol_code_unavail = 89;
+			utracy.protocol.response_string_data = 94;
+			utracy.protocol.response_thread_name = 95;
+
+			utracy.protocol.query_terminate = 0;
+			utracy.protocol.query_string = 1;
+			utracy.protocol.query_thread_string = 2;
+			utracy.protocol.query_source_location = 3;
+			utracy.protocol.query_disconnect = 8;
+			utracy.protocol.query_symbol_code = 12;
+			utracy.protocol.query_source_code = 14;
+			utracy.protocol.query_data_transfer = 15;
+			utracy.protocol.query_data_transfer_part = 16;
+			break;
+
+		/* also covers 0.9.1 */
+		case UTRACY_PROTOCOL_0_9_0:
+			utracy.protocol.zone_begin = 15;
+			utracy.protocol.zone_end = 17;
+			utracy.protocol.zone_color = 64;
+			utracy.protocol.thread_context = 59;
+			utracy.protocol.framemark = 66;
+
+			utracy.protocol.response_source_location = 70;
+			utracy.protocol.response_server_query_noop = 90;
+			utracy.protocol.response_source_code_unavail = 91;
+			utracy.protocol.response_symbol_code_unavail = 92;
+			utracy.protocol.response_string_data = 97;
+			utracy.protocol.response_thread_name = 98;
+
+			utracy.protocol.query_terminate = 0;
+			utracy.protocol.query_string = 1;
+			utracy.protocol.query_thread_string = 2;
+			utracy.protocol.query_source_location = 3;
+			utracy.protocol.query_disconnect = 8;
+			utracy.protocol.query_symbol_code = 12;
+			utracy.protocol.query_source_code = 13;
+			utracy.protocol.query_data_transfer = 14;
+			utracy.protocol.query_data_transfer_part = 15;
+			break;
+
+		default:
+			return -1;
+	}
+
+	return 0;
+}
+
+UTRACY_INTERNAL
 int utracy_client_accept(void) {
 	struct sockaddr_in client;
 
@@ -1957,7 +2019,7 @@ int utracy_write_server_context(int unsigned tid) {
 #pragma pack(pop)
 
 	struct network_thread_context msg = {
-		.type = UTRACY_EVT_THREADCONTEXT,
+		.type = utracy.protocol.thread_context,
 		.tid = tid
 	};
 
@@ -1984,7 +2046,7 @@ int utracy_write_zone_begin(struct event evt) {
 	utracy.data.cur_thread.timestamp = evt.zone_begin.timestamp;
 
 	struct network_zone_begin msg = {
-		.type = UTRACY_EVT_ZONEBEGIN,
+		.type = utracy.protocol.zone_begin,
 		.timestamp = timestamp,
 		.srcloc = (uintptr_t) evt.zone_begin.srcloc
 	};
@@ -2011,7 +2073,7 @@ int utracy_write_zone_end(struct event evt) {
 	utracy.data.cur_thread.timestamp = evt.zone_end.timestamp;
 
 	struct network_zone_end msg = {
-		.type = UTRACY_EVT_ZONEEND,
+		.type = utracy.protocol.zone_end,
 		.timestamp = timestamp
 	};
 
@@ -2036,7 +2098,7 @@ int utracy_write_zone_color(struct event evt) {
 #pragma pack(pop)
 
 	struct network_zone_color msg = {
-		.type = UTRACY_EVT_ZONECOLOR,
+		.type = utracy.protocol.zone_color,
 		.r = (evt.zone_color.color >> 0) & 0xFF,
 		.g = (evt.zone_color.color >> 8) & 0xFF,
 		.b = (evt.zone_color.color >> 16) & 0xFF
@@ -2062,7 +2124,7 @@ int utracy_write_frame_mark(struct event evt) {
 #pragma pack(pop)
 
 	struct network_frame_mark msg = {
-		.type = UTRACY_EVT_FRAMEMARKMSG,
+		.type = utracy.protocol.framemark,
 		.timestamp = evt.frame_mark.timestamp,
 		.name = (uintptr_t) evt.frame_mark.name
 	};
@@ -2092,7 +2154,7 @@ int utracy_write_srcloc(struct utracy_source_location const *const srcloc) {
 #pragma pack(pop)
 
 	struct network_srcloc msg = {
-		.type = UTRACY_RESPONSE_SOURCELOCATION,
+		.type = utracy.protocol.response_source_location,
 		.name = (uintptr_t) srcloc->name,
 		.function = (uintptr_t) srcloc->function,
 		.file = (uintptr_t) srcloc->file,
@@ -2141,6 +2203,67 @@ int utracy_write_stringdata(char unsigned type, char const *const str, long long
 	return 0;
 }
 
+UTRACY_INTERNAL UTRACY_INLINE
+int utracy_write_symbol_code(void) {
+	char unsigned response = utracy.protocol.response_symbol_code_unavail;
+
+	if(0 != utracy_write_packet(&response, sizeof(response))) {
+		LOG_DEBUG_ERROR;
+		return -1;
+	}
+
+	return 0;
+}
+
+UTRACY_INTERNAL UTRACY_INLINE
+int utracy_write_source_code(int unsigned id) {
+#pragma pack(push, 1)
+	struct network_response_source_code {
+		char unsigned type;
+		int unsigned id;
+	};
+	_Static_assert(5 == sizeof(struct network_response_source_code), "incorrect size");
+#pragma pack(pop)
+
+	switch(utracy.protocol.version) {
+		case UTRACY_PROTOCOL_0_8_1:
+		case UTRACY_PROTOCOL_0_8_2:;
+			char unsigned response = utracy.protocol.response_source_code_unavail;
+
+			if(0 != utracy_write_packet(&response, sizeof(response))) {
+				LOG_DEBUG_ERROR;
+				return -1;
+			}
+			break;
+
+		case UTRACY_PROTOCOL_0_9_0:;
+			struct network_response_source_code msg = {
+				.type = utracy.protocol.response_source_code_unavail,
+				.id = id
+			};
+
+			if(0 != utracy_write_packet(&msg, sizeof(msg))) {
+				LOG_DEBUG_ERROR;
+				return -1;
+			}
+			break;
+	}
+
+	return 0;
+}
+
+UTRACY_INTERNAL UTRACY_INLINE
+int utracy_write_data_part(void) {
+	char unsigned response = utracy.protocol.response_server_query_noop;
+
+	if(0 != utracy_write_packet(&response, sizeof(response))) {
+		LOG_DEBUG_ERROR;
+		return -1;
+	}
+
+	return 0;
+}
+
 UTRACY_INTERNAL
 int utracy_consume_request(void) {
 #pragma pack(push, 1)
@@ -2158,72 +2281,41 @@ int utracy_consume_request(void) {
 		return -1;
 	}
 
-	switch(req.type) {
-		case UTRACY_QUERY_STRING:
-			if(0 != utracy_write_stringdata(UTRACY_RESPONSE_STRINGDATA, (char *) (uintptr_t) req.ptr, req.ptr)) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
+	if(req.type == utracy.protocol.query_string) {
+		if(0 != utracy_write_stringdata(utracy.protocol.response_string_data, (char *) (uintptr_t) req.ptr, req.ptr)) {
+			LOG_DEBUG_ERROR;
+			return -1;
+		}
 
-		case UTRACY_QUERY_PLOTNAME:
-			if(0 != utracy_write_stringdata(UTRACY_RESPONSE_PLOTNAME, (char *) (uintptr_t) req.ptr, req.ptr)) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
+	} else if(req.type == utracy.protocol.query_thread_string) {
+		if(0 != utracy_write_stringdata(utracy.protocol.response_thread_name, "main", req.ptr)) {
+			LOG_DEBUG_ERROR;
+			return -1;
+		}
 
-		case UTRACY_QUERY_THREADSTRING:
-			if(0 != utracy_write_stringdata(UTRACY_RESPONSE_THREADNAME, "main", req.ptr)) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
+	} else if(req.type == utracy.protocol.query_source_location) {
+		if(0 != utracy_write_srcloc((struct utracy_source_location *) (uintptr_t) req.ptr)) {
+			LOG_DEBUG_ERROR;
+			return -1;
+		}
 
-		case UTRACY_QUERY_SOURCELOCATION:;
-			if(0 != utracy_write_srcloc((void *) (uintptr_t) req.ptr)) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
+	} else if(req.type == utracy.protocol.query_symbol_code) {
+		if(0 != utracy_write_symbol_code()) {
+			LOG_DEBUG_ERROR;
+			return -1;
+		}
 
-		case UTRACY_QUERY_SYMBOLCODE:;
-			char unsigned symbol_type = UTRACY_RESPONSE_ACKSYMBOLCODENOTAVAILABLE;
-			if(0 != utracy_write_packet(&symbol_type, sizeof(symbol_type))) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
+	} else if(req.type == utracy.protocol.query_source_code) {
+		if(0 != utracy_write_source_code((int unsigned) req.ptr)) {
+			LOG_DEBUG_ERROR;
+			return -1;
+		}
 
-		case UTRACY_QUERY_SOURCECODE:;
-			char unsigned sourcecode_type = UTRACY_RESPONSE_ACKSOURCECODENOTAVAILABLE;
-			if(0 != utracy_write_packet(&sourcecode_type, sizeof(sourcecode_type))) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_DATATRANSFER:
-		case UTRACY_QUERY_DATATRANSFERPART:;
-			char unsigned datatransfer_type = UTRACY_RESPONSE_ACKSERVERQUERYNOOP;
-			if(0 != utracy_write_packet(&datatransfer_type, sizeof(datatransfer_type))) {
-				LOG_DEBUG_ERROR;
-				return -1;
-			}
-			break;
-
-		case UTRACY_QUERY_TERMINATE:
-		case UTRACY_QUERY_CALLSTACKFRAME:
-		case UTRACY_QUERY_FRAMENAME:
-		case UTRACY_QUERY_DISCONNECT:
-		case UTRACY_QUERY_EXTERNALNAME:
-		case UTRACY_QUERY_PARAMETER:
-		case UTRACY_QUERY_SYMBOL:
-		case UTRACY_QUERY_CODELOCATION:
-		case UTRACY_QUERY_FIBERNAME:
-		default:
-			/* not implemented */
-			break;
+	} else if(req.type == utracy.protocol.query_data_transfer || req.type == utracy.protocol.query_data_transfer_part) {
+		if(0 != utracy_write_data_part()) {
+			LOG_DEBUG_ERROR;
+			return -1;
+		}
 	}
 
 	return 0;
@@ -2390,25 +2482,19 @@ int utracy_client_negotiate(void) {
 		return -1;
 	}
 
-	int unsigned supported_protocols[] = {
-		56, /* 0.8.1 */
-		57, /* 0.8.2 */
-		0 /* sentinel - do not remove */
-	};
-
-	int compatible = 0;
-	for(int unsigned *p=supported_protocols; *p; p++) {
-		if(*p == protocol) {
-			compatible = 1;
-			break;
-		}
-	}
-
-	if(0 == compatible) {
+	if(0 != utracy_protocol_init(protocol)) {
 		LOG_DEBUG_ERROR;
+
+		/* protocol mismatch */
+		char unsigned response = 2;
+		if(0 != utracy_client_send(&response, sizeof(response))) {
+			LOG_DEBUG_ERROR;
+		}
+
 		return -1;
 	}
 
+	/* success */
 	char unsigned response = 1;
 	if(0 != utracy_client_send(&response, sizeof(response))) {
 		LOG_DEBUG_ERROR;
