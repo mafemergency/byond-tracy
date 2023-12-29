@@ -2895,6 +2895,7 @@ static int unsigned const byond_offsets[][9] = {
 	[BYOND_VERSION_ADJUSTED(1616)] = {0x004073E0, 0x004073E4, 0x004073F0, 0x00407400,       0x24, 0x00131210, 0x0020B9E0, 0x001C3E20, 0x00050606},
 	[BYOND_VERSION_ADJUSTED(1617)] = {0x004074B0, 0x004074B4, 0x004074C0, 0x004074D0,       0x28, 0x001312D0, 0x0020BAB0, 0x001C3EB0, 0x00050606},
 	[BYOND_VERSION_ADJUSTED(1618)] = {0x004074B0, 0x004074B4, 0x004074C0, 0x004074D0,       0x28, 0x00131350, 0x0020BBA0, 0x001C3F40, 0x00050606},
+	[BYOND_VERSION_ADJUSTED(1623)] = {0x0040755C, 0x00407560, 0x0040756C, 0x0040757C,       0x28, 0x001312D0, 0x0020BB90, 0x001C3EB0, 0x00050606},
 };
 
 #elif defined(UTRACY_LINUX)
@@ -2986,7 +2987,7 @@ UTRACY_INTERNAL
 void build_srclocs(void) {
 #define byond_get_string(id) (id < *byond.strings_len ? *(*byond.strings + id) : NULL)
 #define byond_get_misc(id) (id < *byond.miscs_len ? *(*byond.miscs + id) : NULL)
-#define byond_get_procdef(id) (id < *byond.procdefs_len ? (*byond.procdefs) + id * byond.procdef_size : NULL)
+#define byond_get_procdef(id) (void*)((id < *byond.procdefs_len ? ((char*)(*byond.procdefs)) + id * byond.procdef_size : NULL))
 
 	for(int unsigned i=0; i<0x14000; i++) {
 		char const *name = NULL;
