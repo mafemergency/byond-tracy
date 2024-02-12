@@ -232,6 +232,8 @@ _Static_assert((EVENT_QUEUE_CAPACITY & (EVENT_QUEUE_CAPACITY - 1)) == 0, "EVENT_
 #define UTRACY_LATENCY (100000000ll)
 #define UTRACY_MAX_FRAME_SIZE (256u * 1024u)
 
+static int byond_build = 0;
+
 /* byond types */
 struct object {
 	union {
@@ -262,6 +264,18 @@ struct procdef {
 	int unsigned flags;
 	int unsigned unk0;
 	int unsigned unk1;
+	int unsigned bytecode;
+	int unsigned locals;
+	int unsigned parameters;
+};
+
+struct procdef_legacy {
+	int unsigned path;
+	int unsigned name;
+	int unsigned desc;
+	int unsigned category;
+	int unsigned flags;
+	int unsigned unk0;
 	int unsigned bytecode;
 	int unsigned locals;
 	int unsigned parameters;
@@ -1272,6 +1286,7 @@ static struct {
 	struct misc ***miscs;
 	int unsigned *miscs_len;
 	void **procdefs;
+	void **procdefs_legacy;
 	int unsigned *procdefs_len;
 	int unsigned procdef_size;
 	void *exec_proc;
@@ -2816,6 +2831,7 @@ void *hook(char *const restrict dst, char *const restrict src, char unsigned siz
 #if defined(UTRACY_WINDOWS)
 #	define BYOND_MAX_BUILD 1630
 #	define BYOND_MIN_BUILD 1543
+#	define BYOND_LEGACY_MAX 1623
 #	define BYOND_VERSION_ADJUSTED(a) ((a) - BYOND_MIN_BUILD)
 
 static int unsigned const byond_offsets[][9] = {
@@ -2907,6 +2923,7 @@ static int unsigned const byond_offsets[][9] = {
 #elif defined(UTRACY_LINUX)
 #	define BYOND_MAX_BUILD 1630
 #	define BYOND_MIN_BUILD 1543
+#	define BYOND_LEGACY_MAX 1623
 #	define BYOND_VERSION_ADJUSTED(a) ((a) - BYOND_MIN_BUILD)
 
 static int unsigned const byond_offsets[][9] = {
@@ -3000,7 +3017,9 @@ void build_srclocs(void) {
 #define byond_get_string(id) (id < *byond.strings_len ? *(*byond.strings + id) : NULL)
 #define byond_get_misc(id) (id < *byond.miscs_len ? *(*byond.miscs + id) : NULL)
 #define byond_get_procdef(id) (id < *byond.procdefs_len ? (*byond.procdefs) + id * byond.procdef_size : NULL)
+#define byond_legacy_get_procdef(id) (id < *byond.procdefs_len ? (*byond.procdefs_legacy) + id * byond.procdef_size : NULL)
 
+	int legacy_mode = (byond_build <= BYOND_LEGACY_MAX);
 	for(int unsigned i=0; i<0x14000; i++) {
 		char const *name = NULL;
 		char const *function = "<?>";
@@ -3008,14 +3027,19 @@ void build_srclocs(void) {
 		int unsigned line = 0xFFFFFFFFu;
 		int unsigned color = 0x4444AF;
 
-		struct procdef const *const procdef = byond_get_procdef(i);
+		void* procdef_pnt;
+		procdef_pnt = legacy_mode ? byond_legacy_get_procdef(i) : byond_get_procdef(i);
+
+		struct procdef const *const procdef = procdef_pnt;
+		struct procdef_legacy const *const procdef_legacy = procdef_pnt;
+
 		if(procdef != NULL) {
-			struct string const *const str = byond_get_string(procdef->path);
+			struct string const *const str = legacy_mode ? byond_get_string(procdef_legacy->path) : byond_get_string(procdef->path);
 			if(str != NULL && str->data != NULL) {
 				function = str->data;
 			}
 
-			struct misc const *const misc = byond_get_misc(procdef->bytecode);
+			struct misc const *const misc = legacy_mode ? byond_get_misc(procdef_legacy->bytecode) : byond_get_misc(procdef->bytecode);
 			if(misc != NULL) {
 				int unsigned bytecode_len = misc->bytecode.len;
 				int unsigned *bytecode = misc->bytecode.bytecode;
@@ -3112,7 +3136,7 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 
 #endif
 
-	int byond_build = GetByondBuild();
+	byond_build = GetByondBuild();
 	if(byond_build < BYOND_MIN_BUILD || byond_build > BYOND_MAX_BUILD) {
 		LOG_DEBUG_ERROR;
 		return "byond version unsupported";
@@ -3135,6 +3159,7 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 	byond.miscs = (void *) (byondcore + offsets[2]);
 	byond.miscs_len = (void *) (byondcore + offsets[2] + 0x04);
 	byond.procdefs = (void *) (byondcore + offsets[3]);
+	byond.procdefs_legacy = (void *) (byondcore + offsets[3]);
 	byond.procdefs_len = (void *) (byondcore + offsets[3] + 0x04);
 	byond.procdef_size = offsets[4];
 	byond.exec_proc = (void *) (byondcore + offsets[5]);
@@ -3150,6 +3175,7 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 	byond.miscs = (void *) (libbyond->l_addr + offsets[2]);
 	byond.miscs_len = (void *) (libbyond->l_addr + offsets[2] + 0x04);
 	byond.procdefs = (void *) (libbyond->l_addr + offsets[3]);
+	byond.procdefs_legacy = (void *) (byondcore + offsets[3]);
 	byond.procdefs_len = (void *) (libbyond->l_addr + offsets[3] + 0x04);
 	byond.procdef_size = offsets[4];
 	byond.exec_proc = (void *) (libbyond->l_addr + offsets[5]);
