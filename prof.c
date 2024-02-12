@@ -261,6 +261,7 @@ struct procdef {
 	int unsigned category;
 	int unsigned flags;
 	int unsigned unk0;
+    int unsigned unk1;
 	int unsigned bytecode;
 	int unsigned locals;
 	int unsigned parameters;
@@ -2813,7 +2814,7 @@ void *hook(char *const restrict dst, char *const restrict src, char unsigned siz
 }
 
 #if defined(UTRACY_WINDOWS)
-#	define BYOND_MAX_BUILD 1623
+#	define BYOND_MAX_BUILD 1630
 #	define BYOND_MIN_BUILD 1543
 #	define BYOND_VERSION_ADJUSTED(a) ((a) - BYOND_MIN_BUILD)
 
@@ -2900,6 +2901,7 @@ static int unsigned const byond_offsets[][9] = {
 	[BYOND_VERSION_ADJUSTED(1621)] = {0x0040758C, 0x00407590, 0x0040759C, 0x004075AC,       0x28, 0x001313B0, 0x0020BC70, 0x001C3FC0, 0x00050606},
 	[BYOND_VERSION_ADJUSTED(1622)] = {0x0040755C, 0x00407560, 0x0040756C, 0x0040757C,       0x28, 0x001312D0, 0x0020BB90, 0x001C3EB0, 0x00050606},
 	[BYOND_VERSION_ADJUSTED(1623)] = {0x0040755C, 0x00407560, 0x0040756C, 0x0040757C,       0x28, 0x001312D0, 0x0020BB90, 0x001C3EB0, 0x00050606},
+    [BYOND_VERSION_ADJUSTED(1630)] = {0x0040556C, 0x00405570, 0x0040557C, 0x0040558C,       0x2C, 0x0012F710, 0x0020A2E0, 0x001C2430, 0x00050606},
 };
 
 #elif defined(UTRACY_LINUX)
