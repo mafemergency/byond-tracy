@@ -261,7 +261,7 @@ struct procdef {
 	int unsigned category;
 	int unsigned flags;
 	int unsigned unk0;
-    int unsigned unk1;
+	int unsigned unk1;
 	int unsigned bytecode;
 	int unsigned locals;
 	int unsigned parameters;
