@@ -1286,7 +1286,6 @@ static struct {
 	struct misc ***miscs;
 	int unsigned *miscs_len;
 	void **procdefs;
-	void **procdefs_legacy;
 	int unsigned *procdefs_len;
 	int unsigned procdef_size;
 	void *exec_proc;
@@ -3017,7 +3016,6 @@ void build_srclocs(void) {
 #define byond_get_string(id) (id < *byond.strings_len ? *(*byond.strings + id) : NULL)
 #define byond_get_misc(id) (id < *byond.miscs_len ? *(*byond.miscs + id) : NULL)
 #define byond_get_procdef(id) (id < *byond.procdefs_len ? (*byond.procdefs) + id * byond.procdef_size : NULL)
-#define byond_legacy_get_procdef(id) (id < *byond.procdefs_len ? (*byond.procdefs_legacy) + id * byond.procdef_size : NULL)
 
 	int legacy_mode = (byond_build <= BYOND_LEGACY_MAX);
 	for(int unsigned i=0; i<0x14000; i++) {
@@ -3028,7 +3026,7 @@ void build_srclocs(void) {
 		int unsigned color = 0x4444AF;
 
 		void* procdef_pnt;
-		procdef_pnt = legacy_mode ? byond_legacy_get_procdef(i) : byond_get_procdef(i);
+		procdef_pnt = byond_get_procdef(i);
 
 		struct procdef const *const procdef = procdef_pnt;
 		struct procdef_legacy const *const procdef_legacy = procdef_pnt;
@@ -3159,7 +3157,6 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 	byond.miscs = (void *) (byondcore + offsets[2]);
 	byond.miscs_len = (void *) (byondcore + offsets[2] + 0x04);
 	byond.procdefs = (void *) (byondcore + offsets[3]);
-	byond.procdefs_legacy = (void *) (byondcore + offsets[3]);
 	byond.procdefs_len = (void *) (byondcore + offsets[3] + 0x04);
 	byond.procdef_size = offsets[4];
 	byond.exec_proc = (void *) (byondcore + offsets[5]);
