@@ -3171,7 +3171,6 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 	byond.miscs = (void *) (libbyond->l_addr + offsets[2]);
 	byond.miscs_len = (void *) (libbyond->l_addr + offsets[2] + 0x04);
 	byond.procdefs = (void *) (libbyond->l_addr + offsets[3]);
-	byond.procdefs_legacy = (void *) (byondcore + offsets[3]);
 	byond.procdefs_len = (void *) (libbyond->l_addr + offsets[3] + 0x04);
 	byond.procdef_size = offsets[4];
 	byond.exec_proc = (void *) (libbyond->l_addr + offsets[5]);
