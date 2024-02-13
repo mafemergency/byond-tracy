@@ -3025,11 +3025,10 @@ void build_srclocs(void) {
 		int unsigned line = 0xFFFFFFFFu;
 		int unsigned color = 0x4444AF;
 
-		void* procdef_pnt;
-		procdef_pnt = byond_get_procdef(i);
+		void* procdef_ptr = byond_get_procdef(i);
 
-		struct procdef const *const procdef = procdef_pnt;
-		struct procdef_legacy const *const procdef_legacy = procdef_pnt;
+		struct procdef const *const procdef = procdef_ptr;
+		struct procdef_legacy const *const procdef_legacy = procdef_ptr;
 
 		if(procdef != NULL) {
 			struct string const *const str = legacy_mode ? byond_get_string(procdef_legacy->path) : byond_get_string(procdef->path);
