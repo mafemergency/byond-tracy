@@ -3030,7 +3030,7 @@ void build_srclocs(void) {
 		struct procdef const *const procdef = procdef_ptr;
 		struct procdef_legacy const *const procdef_legacy = procdef_ptr;
 
-		if(procdef != NULL) {
+		if(procdef_ptr!= NULL) {
 			struct string const *const str = legacy_mode ? byond_get_string(procdef_legacy->path) : byond_get_string(procdef->path);
 			if(str != NULL && str->data != NULL) {
 				function = str->data;
