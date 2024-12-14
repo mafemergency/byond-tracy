@@ -3228,7 +3228,7 @@ char *UTRACY_WINDOWS_CDECL UTRACY_LINUX_CDECL init(int argc, char **argv) {
 
 	int unsigned const *const offsets = byond_offsets[BYOND_VERSION_ADJUSTED(byond_build)];
 
-	for(int i=0; i<len(offsets); i++) {
+	for(int i=0; i<11; i++) {
 		if(offsets[i] == 0) {
 			LOG_DEBUG_ERROR;
 			return "byond version unsupported";
