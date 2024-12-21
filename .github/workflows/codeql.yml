@@ -1,0 +1,57 @@
+name: CodeQL
+
+env:
+  CODEQL_EXTRACTOR_CPP_AUTOINSTALL_DEPENDENCIES: false
+
+on:
+  push:
+    branches:
+    - main
+
+  pull_request:
+    branches:
+    - main
+
+  schedule:
+    - cron: 0 8 1,15 * *
+
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - language: c-cpp
+          build-mode: manual
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.build-mode }}
+
+    - if: ${{ matrix.language == 'c-cpp' }}
+      name: Build Linux (GCC)
+      run: |
+        sudo apt-get install gcc-multilib g++-multilib
+        gcc -std=c11 -m32 -shared -fPIC -Ofast -s -DNDEBUG prof.c -pthread -o libprof.so
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{matrix.language}}"
