@@ -2036,7 +2036,7 @@ int utracy_client_send(void *const buf, int unsigned len) {
 
 UTRACY_INTERNAL
 int utracy_commit(void) {
-	if(0 < utracy.data.raw_buf_head - utracy.data.raw_buf_tail) {
+	if(utracy.data.raw_buf_head > utracy.data.raw_buf_tail) {
 		int unsigned pending_len;
 		pending_len = utracy.data.raw_buf_head - utracy.data.raw_buf_tail;
 
